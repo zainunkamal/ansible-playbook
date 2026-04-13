@@ -1,0 +1,737 @@
+---
+- name: Sync Proxmox data to NetBox
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../inventory/group_vars/all.yml
+
+  tasks:
+    # =========================================================
+    # 1. MAIN SYNC BLOCK
+    # Seluruh proses sinkronisasi dibungkus dalam block agar
+    # jika terjadi error fatal, playbook masuk ke rescue dan
+    # tetap mengirim notifikasi FAILED ke Discord.
+    # =========================================================
+    - name: Sync Proxmox to NetBox with failure handling
+      block:
+        # =========================================================
+        # 2. GET SOURCE DATA FROM PROXMOX
+        # Ambil seluruh resource VM dan LXC dari Proxmox sekali saja
+        # agar tidak terlalu banyak request ke API Proxmox.
+        # =========================================================
+        - name: Get all VM and CT resources from Proxmox
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_url }}/api2/json/cluster/resources"
+            method: GET
+            headers:
+              Authorization: "{{ proxmox_token }}"
+            validate_certs: false
+            return_content: true
+          register: proxmox_resources
+
+        - name: Filter only QEMU and LXC instances
+          ansible.builtin.set_fact:
+            proxmox_instances: >-
+              {{
+                proxmox_resources.json.data
+                | selectattr('type', 'in', ['qemu', 'lxc'])
+                | list
+              }}
+
+        # =========================================================
+        # 3. BUILD MAPPED DATA FROM PROXMOX
+        # Bangun data terstruktur dari resource Proxmox sebagai
+        # dasar pembandingan dengan data yang ada di NetBox.
+        # =========================================================
+        - name: Build mapped data from Proxmox resources
+          ansible.builtin.set_fact:
+            mapped_data: "{{ mapped_data | default([]) + [ {
+              'vmid': item.vmid,
+              'type': item.type,
+              'node': item.node,
+              'name': (
+                (item.vmid | string) ~ '-' ~
+                (
+                  item.name
+                  | default('unknown')
+                  | regex_replace('\\s+', '-')
+                )
+              ),
+              'status': 'Active' if item.status == 'running' else 'Offline',
+              'start_on_boot': start_on_boot_value,
+              'site': netbox_site_name,
+              'cluster': netbox_cluster_name
+            } ] }}"
+          loop: "{{ proxmox_instances }}"
+          loop_control:
+            label: "{{ item.type }}-{{ item.vmid }}"
+
+        - name: Build offline candidate list from Proxmox
+          ansible.builtin.set_fact:
+            offline_candidates: "{{ offline_candidates | default([]) + [ item ] }}"
+          loop: "{{ mapped_data }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when: item.status == 'Offline'
+
+        # =========================================================
+        # 4. SPLIT DATA INTO VM AND LXC
+        # Pisahkan data VM (QEMU) dan LXC agar summary dan notifikasi
+        # dapat ditampilkan secara lebih jelas.
+        # =========================================================
+        - name: Split mapped data into VM and LXC
+          ansible.builtin.set_fact:
+            proxmox_vms: "{{ mapped_data | selectattr('type', 'equalto', 'qemu') | list }}"
+            proxmox_lxcs: "{{ mapped_data | selectattr('type', 'equalto', 'lxc') | list }}"
+
+        - name: Split offline data into VM and LXC
+          ansible.builtin.set_fact:
+            offline_vm_candidates: "{{ offline_candidates | default([]) | selectattr('type', 'equalto', 'qemu') | list }}"
+            offline_lxc_candidates: "{{ offline_candidates | default([]) | selectattr('type', 'equalto', 'lxc') | list }}"
+
+        - name: Build online data into VM and LXC
+          ansible.builtin.set_fact:
+            online_vm_candidates: "{{ proxmox_vms | rejectattr('status', 'equalto', 'Offline') | list }}"
+            online_lxc_candidates: "{{ proxmox_lxcs | rejectattr('status', 'equalto', 'Offline') | list }}"
+
+        # =========================================================
+        # 5. PREPARE PROXMOX SUMMARY COUNTS
+        # Hitung jumlah VM/LXC online, offline, dan total untuk
+        # kebutuhan summary dan perbandingan antar-run.
+        # =========================================================
+        - name: Prepare Proxmox VM and LXC summary counts
+          ansible.builtin.set_fact:
+            proxmox_vm_total: "{{ proxmox_vms | length }}"
+            proxmox_lxc_total: "{{ proxmox_lxcs | length }}"
+            proxmox_vm_online_total: "{{ online_vm_candidates | length }}"
+            proxmox_lxc_online_total: "{{ online_lxc_candidates | length }}"
+            proxmox_vm_offline_total: "{{ offline_vm_candidates | length }}"
+            proxmox_lxc_offline_total: "{{ offline_lxc_candidates | length }}"
+
+        - name: Show Proxmox VM and LXC summary counts
+          ansible.builtin.debug:
+            msg:
+              vm_total: "{{ proxmox_vm_total }}"
+              vm_online_total: "{{ proxmox_vm_online_total }}"
+              vm_offline_total: "{{ proxmox_vm_offline_total }}"
+              lxc_total: "{{ proxmox_lxc_total }}"
+              lxc_online_total: "{{ proxmox_lxc_online_total }}"
+              lxc_offline_total: "{{ proxmox_lxc_offline_total }}"
+
+        # =========================================================
+        # 6. LOAD PREVIOUS SUMMARY SNAPSHOT
+        # Baca snapshot hasil run sebelumnya agar dapat menghitung
+        # perubahan naik/turun pada summary notifikasi.
+        # =========================================================
+        - name: Set summary snapshot file path
+          ansible.builtin.set_fact:
+            summary_snapshot_file: "/tmp/proxmox_netbox_summary.json"
+
+        - name: Check if previous summary snapshot exists
+          ansible.builtin.stat:
+            path: "{{ summary_snapshot_file }}"
+          register: summary_snapshot_stat
+
+        - name: Load previous summary snapshot
+          ansible.builtin.slurp:
+            path: "{{ summary_snapshot_file }}"
+          register: previous_summary_snapshot_raw
+          when: summary_snapshot_stat.stat.exists
+
+        - name: Parse previous summary snapshot
+          ansible.builtin.set_fact:
+            previous_summary_snapshot: "{{ previous_summary_snapshot_raw.content | b64decode | from_json }}"
+          when: summary_snapshot_stat.stat.exists
+
+        - name: Initialize default previous summary snapshot
+          ansible.builtin.set_fact:
+            previous_summary_snapshot:
+              vm_online: 0
+              vm_offline: 0
+              vm_total: 0
+              lxc_online: 0
+              lxc_offline: 0
+              lxc_total: 0
+          when: not summary_snapshot_stat.stat.exists
+
+        # =========================================================
+        # 7. CALCULATE SUMMARY DELTA
+        # Bandingkan nilai summary saat ini dengan snapshot sebelumnya
+        # untuk menghasilkan indikator naik/turun.
+        # =========================================================
+        - name: Prepare summary delta values
+          ansible.builtin.set_fact:
+            vm_online_delta: "{{ (proxmox_vm_online_total | int) - (previous_summary_snapshot.vm_online | int) }}"
+            vm_offline_delta: "{{ (proxmox_vm_offline_total | int) - (previous_summary_snapshot.vm_offline | int) }}"
+            vm_total_delta: "{{ (proxmox_vm_total | int) - (previous_summary_snapshot.vm_total | int) }}"
+            lxc_online_delta: "{{ (proxmox_lxc_online_total | int) - (previous_summary_snapshot.lxc_online | int) }}"
+            lxc_offline_delta: "{{ (proxmox_lxc_offline_total | int) - (previous_summary_snapshot.lxc_offline | int) }}"
+            lxc_total_delta: "{{ (proxmox_lxc_total | int) - (previous_summary_snapshot.lxc_total | int) }}"
+
+        - name: Build summary display strings
+          ansible.builtin.set_fact:
+            vm_online_display: >-
+              {{
+                (proxmox_vm_online_total | string)
+                if (vm_online_delta | int) == 0
+                else
+                (proxmox_vm_online_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (vm_online_delta | string)
+                  if (vm_online_delta | int) > 0
+                  else '🔴↓' ~ (((vm_online_delta | int) | abs) | string)
+                )
+              }}
+            vm_offline_display: >-
+              {{
+                (proxmox_vm_offline_total | string)
+                if (vm_offline_delta | int) == 0
+                else
+                (proxmox_vm_offline_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (vm_offline_delta | string)
+                  if (vm_offline_delta | int) > 0
+                  else '🔴↓' ~ (((vm_offline_delta | int) | abs) | string)
+                )
+              }}
+            vm_total_display: >-
+              {{
+                (proxmox_vm_total | string)
+                if (vm_total_delta | int) == 0
+                else
+                (proxmox_vm_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (vm_total_delta | string)
+                  if (vm_total_delta | int) > 0
+                  else '🔴↓' ~ (((vm_total_delta | int) | abs) | string)
+                )
+              }}
+            lxc_online_display: >-
+              {{
+                (proxmox_lxc_online_total | string)
+                if (lxc_online_delta | int) == 0
+                else
+                (proxmox_lxc_online_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (lxc_online_delta | string)
+                  if (lxc_online_delta | int) > 0
+                  else '🔴↓' ~ (((lxc_online_delta | int) | abs) | string)
+                )
+              }}
+            lxc_offline_display: >-
+              {{
+                (proxmox_lxc_offline_total | string)
+                if (lxc_offline_delta | int) == 0
+                else
+                (proxmox_lxc_offline_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (lxc_offline_delta | string)
+                  if (lxc_offline_delta | int) > 0
+                  else '🔴↓' ~ (((lxc_offline_delta | int) | abs) | string)
+                )
+              }}
+            lxc_total_display: >-
+              {{
+                (proxmox_lxc_total | string)
+                if (lxc_total_delta | int) == 0
+                else
+                (proxmox_lxc_total | string) ~ ' ' ~
+                (
+                  '🟢↑' ~ (lxc_total_delta | string)
+                  if (lxc_total_delta | int) > 0
+                  else '🔴↓' ~ (((lxc_total_delta | int) | abs) | string)
+                )
+              }}
+
+        # =========================================================
+        # 8. GET TARGET DATA FROM NETBOX
+        # Ambil cluster target dan data VM yang sudah ada di NetBox
+        # sebagai pembanding untuk proses sinkronisasi.
+        # =========================================================
+        - name: Get target cluster from NetBox
+          ansible.builtin.uri:
+            url: "{{ netbox_api_url }}/virtualization/clusters/?name={{ netbox_cluster_name | urlencode }}"
+            method: GET
+            headers:
+              Authorization: "{{ netbox_token }}"
+            validate_certs: false
+            return_content: true
+          register: netbox_cluster_result
+
+        - name: Fail if NetBox cluster is not found
+          ansible.builtin.fail:
+            msg: "Cluster '{{ netbox_cluster_name }}' tidak ditemukan di NetBox"
+          when: netbox_cluster_result.json.count | int == 0
+
+        - name: Set NetBox cluster and site IDs
+          ansible.builtin.set_fact:
+            netbox_cluster_id: "{{ netbox_cluster_result.json.results[0].id }}"
+            netbox_site_id: "{{ netbox_cluster_result.json.results[0].scope.id }}"
+
+        - name: Get all current virtual machines from NetBox
+          ansible.builtin.uri:
+            url: "{{ netbox_api_url }}/virtualization/virtual-machines/?limit=1000"
+            method: GET
+            headers:
+              Authorization: "{{ netbox_token }}"
+            validate_certs: false
+            return_content: true
+          register: netbox_vms_result
+
+        - name: Build NetBox VM map by name
+          ansible.builtin.set_fact:
+            netbox_vm_map: "{{ netbox_vm_map | default({}) | combine({ item.name: item }) }}"
+          loop: "{{ netbox_vms_result.json.results | default([]) }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Build Proxmox VM map by name
+          ansible.builtin.set_fact:
+            proxmox_vm_map: "{{ proxmox_vm_map | default({}) | combine({ item.name: item }) }}"
+          loop: "{{ mapped_data }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        # =========================================================
+        # 9. BUILD CREATE / UPDATE / DELETE CANDIDATES
+        # Menentukan data mana yang perlu dibuat, diperbarui,
+        # atau ditandai sebagai delete preview.
+        # Delete tidak dijalankan otomatis dan tetap perlu
+        # verifikasi manual di NetBox.
+        # =========================================================
+        - name: Build create candidate list
+          ansible.builtin.set_fact:
+            create_candidates: "{{ create_candidates | default([]) + [ item ] }}"
+          loop: "{{ mapped_data }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when: item.name not in (netbox_vm_map | default({}))
+
+        - name: Build update candidate list
+          ansible.builtin.set_fact:
+            update_candidates: "{{ update_candidates | default([]) + [ {
+              'name': item.name,
+              'proxmox': item,
+              'netbox': netbox_vm_map[item.name]
+            } ] }}"
+          loop: "{{ mapped_data }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when:
+            - item.name in (netbox_vm_map | default({}))
+            - >
+              (
+                (netbox_vm_map[item.name].status.value | default(netbox_vm_map[item.name].status.label | default('')) | lower)
+                != (item.status | lower)
+              )
+              or
+              ((netbox_vm_map[item.name].site.id | default(0) | int) != (netbox_site_id | int))
+              or
+              ((netbox_vm_map[item.name].cluster.id | default(0) | int) != (netbox_cluster_id | int))
+
+        - name: Build delete candidate list
+          ansible.builtin.set_fact:
+            delete_candidates: "{{ delete_candidates | default([]) + [ item ] }}"
+          loop: "{{ netbox_vms_result.json.results | default([]) }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when:
+            - item.name not in (proxmox_vm_map | default({}))
+            - (item.cluster.name | default('')) == netbox_cluster_name
+
+        # =========================================================
+        # 10. SHOW SYNC PLAN
+        # Tampilkan ringkasan awal dan sampel kandidat untuk
+        # memudahkan validasi dan troubleshooting.
+        # =========================================================
+        - name: Show sync plan summary
+          ansible.builtin.debug:
+            msg:
+              proxmox_vm_total: "{{ proxmox_vms | length }}"
+              proxmox_lxc_total: "{{ proxmox_lxcs | length }}"
+              netbox_total_before: "{{ netbox_vms_result.json.count | default(0) }}"
+              create_total: "{{ create_candidates | default([]) | length }}"
+              update_total: "{{ update_candidates | default([]) | length }}"
+              delete_total: "{{ delete_candidates | default([]) | length }}"
+              offline_vm_total: "{{ offline_vm_candidates | length }}"
+              offline_lxc_total: "{{ offline_lxc_candidates | length }}"
+
+        - name: Show first 10 create candidate names
+          ansible.builtin.debug:
+            msg: "{{ (create_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Show first 10 update candidate names
+          ansible.builtin.debug:
+            msg: "{{ (update_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Show first 10 delete candidate names
+          ansible.builtin.debug:
+            msg: "{{ (delete_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Show first 10 offline VM names
+          ansible.builtin.debug:
+            msg: "{{ (offline_vm_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Show first 10 offline LXC names
+          ansible.builtin.debug:
+            msg: "{{ (offline_lxc_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        # =========================================================
+        # 11. PREPARE NOTIFICATION NAME LISTS
+        # Siapkan daftar nama resource untuk notifikasi Discord.
+        # Yang ditampilkan detail hanya perubahan penting.
+        # =========================================================
+        - name: Build first 10 create names for notification
+          ansible.builtin.set_fact:
+            discord_create_names: "{{ (create_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Build first 10 update names for notification
+          ansible.builtin.set_fact:
+            discord_update_names: "{{ (update_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Build first 10 delete names for notification
+          ansible.builtin.set_fact:
+            discord_delete_names: "{{ (delete_candidates | default([]))[:10] | map(attribute='name') | list }}"
+
+        - name: Build VM and LXC notification name lists
+          ansible.builtin.set_fact:
+            discord_create_vm_names: "{{ ((create_candidates | default([]) | selectattr('type', 'equalto', 'qemu') | map(attribute='name') | list)[:10]) }}"
+            discord_create_lxc_names: "{{ ((create_candidates | default([]) | selectattr('type', 'equalto', 'lxc') | map(attribute='name') | list)[:10]) }}"
+            discord_update_vm_names: "{{ ((update_candidates | default([]) | selectattr('proxmox.type', 'equalto', 'qemu') | map(attribute='name') | list)[:10]) }}"
+            discord_update_lxc_names: "{{ ((update_candidates | default([]) | selectattr('proxmox.type', 'equalto', 'lxc') | map(attribute='name') | list)[:10]) }}"
+            discord_delete_vm_names: []
+            discord_delete_lxc_names: []
+
+        # =========================================================
+        # 12. EXECUTE UPDATE AND CREATE TO NETBOX
+        # Jalankan sinkronisasi ke NetBox. Kegagalan pada satu item
+        # tidak langsung menggagalkan seluruh proses sync.
+        # =========================================================
+        - name: Update existing VMs in NetBox
+          ansible.builtin.uri:
+            url: "{{ netbox_api_url }}/virtualization/virtual-machines/{{ item.netbox.id }}/"
+            method: PATCH
+            headers:
+              Authorization: "{{ netbox_token }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              status: "{{ item.proxmox.status | lower }}"
+              cluster: "{{ netbox_cluster_id }}"
+              site: "{{ netbox_site_id }}"
+            validate_certs: false
+            status_code: [200, 204]
+          loop: "{{ update_candidates | default([]) }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when:
+            - item.netbox is defined
+            - item.netbox.id is defined
+            - item.proxmox is defined
+          register: update_results
+          failed_when: false
+
+        - name: Create new VMs in NetBox
+          ansible.builtin.uri:
+            url: "{{ netbox_api_url }}/virtualization/virtual-machines/"
+            method: POST
+            headers:
+              Authorization: "{{ netbox_token }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              name: "{{ item.name }}"
+              cluster: "{{ netbox_cluster_id }}"
+              site: "{{ netbox_site_id }}"
+              status: "{{ item.status | lower }}"
+            validate_certs: false
+            status_code: 201
+          loop: "{{ create_candidates | default([]) }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: create_results
+          failed_when: false
+
+        # =========================================================
+        # 13. GROUP SUCCESSFUL AND FAILED RESULTS
+        # Pisahkan hasil create/update yang berhasil dan gagal
+        # agar summary serta notifikasi menjadi lebih jelas.
+        # =========================================================
+        - name: Initialize successful and failed sync lists
+          ansible.builtin.set_fact:
+            successful_update_vms: []
+            failed_update_vms: []
+            successful_create_vms: []
+            failed_create_vms: []
+
+        - name: Build successful update VM list
+          ansible.builtin.set_fact:
+            successful_update_vms: "{{ successful_update_vms + [ item.item.name | default('unknown') ] }}"
+          loop: "{{ update_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.name | default('unknown') }}"
+          when:
+            - item.failed is not defined or not item.failed
+            - item.status is defined
+            - item.status in [200, 204]
+
+        - name: Build failed update VM list
+          ansible.builtin.set_fact:
+            failed_update_vms: "{{ failed_update_vms + [ item.item.name | default('unknown') ] }}"
+          loop: "{{ update_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.name | default('unknown') }}"
+          when:
+            - item.status is not defined or item.status not in [200, 204]
+
+        - name: Build successful create VM list
+          ansible.builtin.set_fact:
+            successful_create_vms: "{{ successful_create_vms + [ item.item.name | default('unknown') ] }}"
+          loop: "{{ create_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.name | default('unknown') }}"
+          when:
+            - item.failed is not defined or not item.failed
+            - item.status is defined
+            - item.status == 201
+
+        - name: Build failed create VM list
+          ansible.builtin.set_fact:
+            failed_create_vms: "{{ failed_create_vms + [ item.item.name | default('unknown') ] }}"
+          loop: "{{ create_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.name | default('unknown') }}"
+          when:
+            - item.status is not defined or item.status != 201
+
+        # =========================================================
+        # 14. GET FINAL DATA FROM NETBOX
+        # Ambil ulang data NetBox setelah sinkronisasi selesai
+        # untuk memastikan hasil akhir sudah sesuai.
+        # =========================================================
+        - name: Get final current virtual machines from NetBox
+          ansible.builtin.uri:
+            url: "{{ netbox_api_url }}/virtualization/virtual-machines/?limit=1000"
+            method: GET
+            headers:
+              Authorization: "{{ netbox_token }}"
+            validate_certs: false
+            return_content: true
+          register: final_netbox_vms_result
+
+        - name: Show final sync summary
+          ansible.builtin.debug:
+            msg:
+              vm_total: "{{ proxmox_vms | length }}"
+              lxc_total: "{{ proxmox_lxcs | length }}"
+              netbox_total_before: "{{ netbox_vms_result.json.count | default(0) }}"
+              netbox_total_after: "{{ final_netbox_vms_result.json.count | default(0) }}"
+              created_success: "{{ successful_create_vms | length }}"
+              created_failed: "{{ failed_create_vms | length }}"
+              updated_success: "{{ successful_update_vms | length }}"
+              updated_failed: "{{ failed_update_vms | length }}"
+              delete_preview_only: "{{ delete_candidates | default([]) | length }}"
+              offline_vm_total: "{{ offline_vm_candidates | length }}"
+              offline_lxc_total: "{{ offline_lxc_candidates | length }}"
+
+        # =========================================================
+        # 15. PREPARE NOTIFICATION COUNTERS
+        # Hitung jumlah sukses, gagal, delete preview, dan offline
+        # untuk dipakai pada status notifikasi Discord.
+        # =========================================================
+        - name: Build failed create names for notification
+          ansible.builtin.set_fact:
+            discord_failed_create_names: "{{ (failed_create_vms | default([]))[:10] }}"
+
+        - name: Build failed update names for notification
+          ansible.builtin.set_fact:
+            discord_failed_update_names: "{{ (failed_update_vms | default([]))[:10] }}"
+
+        - name: Prepare sync notification values
+          ansible.builtin.set_fact:
+            created_success_count: "{{ successful_create_vms | default([]) | length }}"
+            created_failed_count: "{{ failed_create_vms | default([]) | length }}"
+            updated_success_count: "{{ successful_update_vms | default([]) | length }}"
+            updated_failed_count: "{{ failed_update_vms | default([]) | length }}"
+            delete_preview_count: "{{ delete_candidates | default([]) | length }}"
+
+        # =========================================================
+        # 16. SET NOTIFICATION STATUS
+        # WARNING digunakan jika ada perubahan data, delete preview,
+        # atau kegagalan parsial. SUCCESS digunakan jika tidak ada
+        # perubahan dan tidak ada kegagalan.
+        # =========================================================
+        - name: Set notification status and title
+          ansible.builtin.set_fact:
+            sync_notification_status: >-
+              {{
+                'WARNING'
+                if (
+                  (created_success_count | int) > 0 or
+                  (updated_success_count | int) > 0 or
+                  (created_failed_count | int) > 0 or
+                  (updated_failed_count | int) > 0 or
+                  (delete_preview_count | int) > 0
+                )
+                else 'SUCCESS'
+              }}
+            sync_notification_color: >-
+              {{
+                16776960
+                if (
+                  (created_success_count | int) > 0 or
+                  (updated_success_count | int) > 0 or
+                  (created_failed_count | int) > 0 or
+                  (updated_failed_count | int) > 0 or
+                  (delete_preview_count | int) > 0
+                )
+                else 5763719
+              }}
+            sync_notification_title: >-
+              {{
+                '⚠️ [WARNING] Proxmox to NetBox Sync'
+                if (
+                  (created_success_count | int) > 0 or
+                  (updated_success_count | int) > 0 or
+                  (created_failed_count | int) > 0 or
+                  (updated_failed_count | int) > 0 or
+                  (delete_preview_count | int) > 0
+                )
+                else '✅ [SUCCESS] Proxmox to NetBox Sync'
+              }}
+
+        # =========================================================
+        # 17. BUILD NOTIFICATION CONTENT
+        # Susun isi pesan notifikasi Discord, termasuk summary,
+        # perubahan data, dan status akhir sinkronisasi.
+        # =========================================================
+        - name: Build sync status lines
+          ansible.builtin.set_fact:
+            sync_status_lines: >-
+              {%- set lines = [] -%}
+              {%- if (created_success_count | int) == 0
+                    and (updated_success_count | int) == 0
+                    and (delete_preview_count | int) == 0
+                    and (created_failed_count | int) == 0
+                    and (updated_failed_count | int) == 0 -%}
+              {%-   set _ = lines.append('No data changes') -%}
+              {%- endif -%}
+              {%- if (discord_create_vm_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Added VM: ' ~ (discord_create_vm_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_create_lxc_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Added LXC: ' ~ (discord_create_lxc_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_update_vm_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Updated VM: ' ~ (discord_update_vm_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_update_lxc_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Updated LXC: ' ~ (discord_update_lxc_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_delete_vm_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Delete preview VM: ' ~ (discord_delete_vm_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_delete_lxc_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Delete preview LXC: ' ~ (discord_delete_lxc_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_failed_create_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Failed create: ' ~ (discord_failed_create_names | join(', '))) -%}
+              {%- endif -%}
+              {%- if (discord_failed_update_names | default([]) | length) > 0 -%}
+              {%-   set _ = lines.append('Failed update: ' ~ (discord_failed_update_names | join(', '))) -%}
+              {%- endif -%}
+              {{ lines | join('\n') }}
+
+        - name: Build sync notification body
+          ansible.builtin.set_fact:
+            sync_notification_body: |-
+              **Alias:** `{{ sync_alias }}`
+
+              **Summary**
+              ```text
+              State    VM        LXC
+              -----    --------  --------
+              Online   {{ '%-8s' | format(vm_online_display) }}  {{ '%-8s' | format(lxc_online_display) }}
+              Offline  {{ '%-8s' | format(vm_offline_display) }}  {{ '%-8s' | format(lxc_offline_display) }}
+              Total    {{ '%-8s' | format(vm_total_display) }}  {{ '%-8s' | format(lxc_total_display) }}
+              ```
+
+              **Status**
+              {{ sync_status_lines }}
+
+        # =========================================================
+        # 18. SEND SUCCESS / WARNING NOTIFICATION
+        # Kirim hasil sinkronisasi ke Discord setelah proses utama
+        # selesai dijalankan.
+        # =========================================================
+        - name: Send Discord notification for sync result
+          ansible.builtin.uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            body_format: json
+            body:
+              username: "{{ discord_bot_name | default('Ansible Monitoring Bot') }}"
+              embeds:
+                - title: "{{ sync_notification_title }}"
+                  color: "{{ sync_notification_color }}"
+                  description: "{{ sync_notification_body }}"
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+            status_code: 204
+          when: discord_webhook_url is defined and discord_webhook_url | length > 0
+
+        # =========================================================
+        # 19. SAVE CURRENT SUMMARY SNAPSHOT
+        # Simpan summary saat ini agar bisa dibandingkan dengan run
+        # berikutnya untuk menampilkan panah naik/turun.
+        # =========================================================
+        - name: Save current summary snapshot
+          ansible.builtin.copy:
+            dest: "{{ summary_snapshot_file }}"
+            content: |
+              {
+                "vm_online": {{ proxmox_vm_online_total | int }},
+                "vm_offline": {{ proxmox_vm_offline_total | int }},
+                "vm_total": {{ proxmox_vm_total | int }},
+                "lxc_online": {{ proxmox_lxc_online_total | int }},
+                "lxc_offline": {{ proxmox_lxc_offline_total | int }},
+                "lxc_total": {{ proxmox_lxc_total | int }}
+              }
+            mode: '0644'
+
+      # =========================================================
+      # 20. RESCUE BLOCK FOR FATAL ERROR
+      # Jika terjadi error fatal pada proses utama, kirim notifikasi
+      # FAILED ke Discord agar tetap terpantau.
+      # =========================================================
+      rescue:
+        - name: Send Discord failed notification
+          ansible.builtin.uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            body_format: json
+            body:
+              username: "{{ discord_bot_name | default('Ansible Monitoring Bot') }}"
+              embeds:
+                - title: "❌ [FAILED] Proxmox to NetBox Sync"
+                  color: 15158332
+                  description: |
+                    **Alias:** `{{ sync_alias }}`
+
+                    **Status**
+                    Synchronization failed due to a fatal error in the main process.
+
+                    **Possible causes**
+                    - Invalid Proxmox / NetBox token
+                    - Proxmox / NetBox API is unreachable
+                    - Target cluster was not found
+                    - Fatal playbook execution error
+
+                    **Action**
+                    Please check the Ansible Semaphore logs for detailed error information.
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+            status_code: 204
+          when: discord_webhook_url is defined and discord_webhook_url | length > 0
+          ignore_errors: true

@@ -1,0 +1,598 @@
+---
+# =========================================================
+# INVENTORY CONDITION VALIDATION BEFORE MAIN PLAYBOOK RUNS
+# =========================================================
+- name: Validate Inventory Parsing
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Send Inventory Error Notification to Discord
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 204
+        body:
+          username: "Ansible DRC Bot"
+          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+          embeds:
+            - title: "🚨 [FATAL] Failed to Parse Inventory!"
+              color: 16711680
+              description: |
+                **STATUS: FATAL ERROR!** 🚨
+                The process has been **completely aborted** due to a corrupted inventory file or a **Syntax Error** (e.g., using tabs `\t` instead of spaces for indentation, malformed format) or no hosts found under the `app_servers` group.
+                
+                The log output indicates: `We were unable to read either as JSON nor YAML` or `character that cannot start any token`.
+                Please fix the YAML Inventory formatting and ensure it is valid!
+              footer:
+                text: "Automated by Ansible Semaphore"
+      when: 
+        - "(groups['app_servers'] is not defined) or (groups['app_servers'] | length == 0)"
+        - "discord_webhook_url is defined"
+        - "'discord' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Inventory Error Notification to Telegram
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          parse_mode: "Markdown"
+          text: |
+            🚨 *[FATAL] Failed to Parse Inventory!*
+
+            *STATUS: FATAL ERROR!* 🚨
+            The process has been completely aborted because a *Syntax Error* occurred in the inventory file (e.g., tabs read as illegal characters) or the host list is empty.
+            
+            Please fix the YAML inventory format! (Recheck indentation spacing).
+      when: 
+        - "(groups['app_servers'] is not defined) or (groups['app_servers'] | length == 0)"
+        - "telegram_bot_token is defined"
+        - "'telegram' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Inventory Error Notification to WhatsApp
+      uri:
+        url: "{{ whatsapp_api_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ whatsapp_api_key | default('') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ whatsapp_target_number }}"
+          message: |
+            🚨 *[FATAL] Failed to Parse Inventory!*
+
+            *STATUS: FATAL ERROR!* 🚨
+            The process has been completely aborted because the inventory file is corrupted, returned a *Syntax Error* (e.g., tab indentation instead of spaces), or the host group is empty.
+            
+            Please fix the YAML Inventory formatting/spacing!
+      when: 
+        - "(groups['app_servers'] is not defined) or (groups['app_servers'] | length == 0)"
+        - "whatsapp_api_url is defined and whatsapp_target_number is defined"
+        - "'whatsapp' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Halt Execution
+      fail:
+        msg: "Failed to process inventory. Make sure to use spaces (` `) for indentation, not the TAB (`\t`) key."
+      when: "(groups['app_servers'] is not defined) or (groups['app_servers'] | length == 0)"
+
+- name: Daily & Monthly Backup Automation
+  hosts: app_servers
+  gather_facts: no # Disabled so dead servers aren't immediately kicked out
+
+  vars:
+    daily_retention_days: "7"
+    monthly_retention_days: "365"
+
+  tasks:
+    # =========================================================
+    # CHECK CONNECTION (PING) FIRST
+    # =========================================================
+    - name: Check Connection to App Server
+      ping:
+      ignore_unreachable: yes
+      register: check_conn
+
+    # =========================================================
+    # UNREACHABLE NOTIFICATIONS (DEAD SERVER / SSH FAILED)
+    # =========================================================
+    - name: Send Unreachable Notification to Discord
+      delegate_to: localhost
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 204
+        body:
+          username: "Ansible DRC Bot"
+          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+          embeds:
+            - title: "🚨 [CRITICAL] Server Unreachable!"
+              color: 16711680 # Dark Red
+              thumbnail:
+                url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+              description: |
+                **Alias:** `{{ server_alias | default('Unknown Server') }}`
+                **Server IP:** `{{ inventory_hostname }}`
+
+                **Failed Backup Applications:**
+                {% if apps is defined %}
+                {% for app in apps %}
+                - 🚨 {{ app.name }}
+                {% endfor %}
+                {% else %}
+                - 🚨 *(No 'apps' configuration found in inventory)*
+                {% endif %}
+
+                **STATUS: SERVER DOWN / LOGIN FAILED!** 🚨
+                Ansible is unable to establish an SSH connection to the application server. The backup process has been fully aborted for this server.
+              footer:
+                text: "Automated by Ansible Semaphore"
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'discord' in (active_notifications | default(['discord']))"
+
+    - name: Send Unreachable Notification to Telegram
+      delegate_to: localhost
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          parse_mode: "Markdown"
+          text: |
+            🚨 *[CRITICAL] Server Unreachable!*
+            *Alias:* `{{ server_alias | default('Unknown Server') }}`
+            *Server IP:* `{{ inventory_hostname }}`
+
+            *Failed Backup Applications:*
+            {% if apps is defined %}
+            {% for app in apps %}
+            - 🚨 {{ app.name }}
+            {% endfor %}
+            {% else %}
+            - 🚨 *(No 'apps' configuration found in inventory)*
+            {% endif %}
+
+            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
+            Ansible is unable to establish an SSH connection to the application server. The backup process is aborted.
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'telegram' in (active_notifications | default([]))"
+
+    - name: Send Unreachable Notification to WhatsApp
+      delegate_to: localhost
+      uri:
+        url: "{{ whatsapp_api_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ whatsapp_api_key | default('') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ whatsapp_target_number }}"
+          message: |
+            🚨 *[CRITICAL] Server Unreachable!*
+            *Alias:* {{ server_alias | default('Unknown Server') }}
+            *Server IP:* {{ inventory_hostname }}
+
+            *Failed Backup Applications:*
+            {% if apps is defined %}
+            {% for app in apps %}
+            - 🚨 {{ app.name }}
+            {% endfor %}
+            {% else %}
+            - 🚨 *(No 'apps' configuration found in inventory)*
+            {% endif %}
+
+            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
+            Ansible is unable to establish an SSH connection to the application server. The backup process is aborted.
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'whatsapp' in (active_notifications | default([]))"
+
+
+    # =========================================================
+    # IF SERVER IS ALIVE, PROCEED TO BACKUP BLOCK
+    # =========================================================
+    - name: Execute Backup (Only If Server Is Alive)
+      when: check_conn.unreachable is not defined
+      block:
+        - name: Gather Facts
+          setup:
+
+        - name: Set Dynamic Time Variables
+          set_fact:
+            date_daily: "{{ ansible_date_time.date }}"
+            month_last: "{{ lookup('pipe', 'date -d \"-1 month\" +%B-%Y') }}"
+            is_first_day: "{{ ansible_date_time.day == '01' }}"
+
+        # =========================================================
+        # MAIN PROCESS (PARALLEL APP BACKUP EXECUTION)
+        # =========================================================
+        - name: Initialize Backup Results Array
+          set_fact:
+            app_backup_results: []
+
+        - name: "1. Ensure directory structures exist on Backup Server"
+          command: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "mkdir -p {{ backup_path }}/web/html/{{ item.name }} {{ backup_path }}/web/daily/{{ item.name }} {{ backup_path }}/web/monthly/{{ item.name }}"
+          loop: "{{ apps }}"
+          register: mkdir_res
+          ignore_errors: yes
+
+        - name: "1.5. Measure PRE-Backup Size on Remote Server"
+          command: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
+          loop: "{{ apps }}"
+          register: size_before_res
+          ignore_errors: yes
+
+        - name: "2. Rsync application source code to Backup Server (Async Parallel)"
+          command: >
+            rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete
+            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            {% for ex in item.exclude | default([]) %}--exclude='{{ ex }}' {% endfor %}
+            {{ item.src }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/web/html/{{ item.name }}/
+          loop: "{{ apps }}"
+          async: 10800
+          poll: 0
+          register: rsync_jobs
+          ignore_errors: yes
+
+        - name: "2.5. Waiting for Rsync Processes (1-Min Checks)..."
+          async_status:
+            jid: "{{ item.ansible_job_id }}"
+          loop: "{{ rsync_jobs.results }}"
+          register: rsync_results
+          until: rsync_results.finished
+          retries: 180
+          delay: 60
+          when: item.ansible_job_id is defined
+          ignore_errors: yes
+
+        - name: "2.6. Measure POST-Backup Size on Remote Server"
+          command: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
+          loop: "{{ apps }}"
+          register: size_after_res
+          ignore_errors: yes
+
+        - name: "3. (DAILY) Compress HTML directories to Tar.gz (Async Parallel)"
+          command: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "tar -czf {{ backup_path }}/web/daily/{{ item.name }}/{{ date_daily }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
+          loop: "{{ apps }}"
+          async: 10800
+          poll: 0
+          register: tar_daily_jobs
+          when: not (rsync_results.results[__loop_index].failed | default(true))
+          loop_control:
+            index_var: __loop_index
+          ignore_errors: yes
+
+        - name: "3.5. Waiting for Daily Tar Processes (1-Min Checks)..."
+          async_status:
+            jid: "{{ item.ansible_job_id }}"
+          loop: "{{ tar_daily_jobs.results }}"
+          register: tar_daily_results
+          until: tar_daily_results.finished
+          retries: 180
+          delay: 60
+          when: item.ansible_job_id is defined
+          ignore_errors: yes
+
+        - name: "4. (DAILY) Delete expired daily backups"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "find {{ backup_path }}/web/daily/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ daily_retention_days }} -exec rm -f {} \;"
+          loop: "{{ apps }}"
+          ignore_errors: yes
+
+        - name: "5. (MONTHLY) Compress HTML directories to Monthly Tar.gz (Async Parallel)"
+          command: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "tar -czf {{ backup_path }}/web/monthly/{{ item.name }}/{{ month_last }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
+          loop: "{{ apps }}"
+          async: 10800
+          poll: 0
+          register: tar_monthly_jobs
+          when: 
+            - is_first_day | default(false)
+            - not (rsync_results.results[__loop_index].failed | default(true))
+          loop_control:
+            index_var: __loop_index
+          ignore_errors: yes
+
+        - name: "5.5. Waiting for Monthly Tar Processes (1-Min Checks)..."
+          async_status:
+            jid: "{{ item.ansible_job_id }}"
+          loop: "{{ tar_monthly_jobs.results }}"
+          register: tar_monthly_results
+          until: tar_monthly_results.finished
+          retries: 180
+          delay: 60
+          when: item.ansible_job_id is defined
+          ignore_errors: yes
+
+        - name: "6. (MONTHLY) Delete expired monthly backups"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            "find {{ backup_path }}/web/monthly/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ monthly_retention_days }} -exec rm -f {} \;"
+          loop: "{{ apps }}"
+          when: is_first_day | default(false)
+          ignore_errors: yes
+
+        - name: "Centralize Application Backup Status"
+          set_fact:
+            app_backup_results: "{{ app_backup_results + [app_item] }}"
+          vars:
+            raw_before: "{{ size_before_res.results[idx].stdout | default('0') | regex_replace('[^0-9]', '') }}"
+            raw_after: "{{ size_after_res.results[idx].stdout | default('0') | regex_replace('[^0-9]', '') }}"
+            size_before: "{{ (raw_before if raw_before | length > 0 else '0') | int }}"
+            size_after: "{{ (raw_after if raw_after | length > 0 else '0') | int }}"
+            size_diff: "{{ (size_after | int) - (size_before | int) }}"
+            status: "{{ 'Success' if not (rsync_results.results[idx].failed | default(true)) and not (tar_daily_results.results[idx].failed | default(false)) else 'Failed' }}"
+            indicator: >-
+              {% if size_diff | int > 0 %}🟩 ⬆️ +{{ size_diff | abs | filesizeformat }}
+              {% elif size_diff | int < 0 %}🟥 ⬇️ -{{ size_diff | abs | filesizeformat }}
+              {% else %}⬜ ➖ Neutral{% endif %}
+            app_item:
+              name: "{{ item.name }}"
+              status: "{{ status }}"
+              total_size: "{{ size_after | filesizeformat }}"
+              indicator: "{{ indicator }}"
+          loop: "{{ apps }}"
+          loop_control:
+            index_var: idx
+
+        # =========================================================
+        # FINAL RECAP ALERTS
+        # =========================================================
+        - name: 7a. Send RECAP Notification to Discord
+          delegate_to: localhost
+          uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            status_code: 204
+            body:
+              username: "Ansible DRC Bot"
+              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+              embeds:
+                - title: "📋 [REPORT] Server Backup Details"
+                  color: 3066993 # Green
+                  thumbnail:
+                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+                  description: |
+                    **Alias:** `{{ server_alias | default(inventory_hostname) }}`
+                    **Server IP:** `{{ inventory_hostname }}`
+                    **DRC Target:** `{{ backup_ip | default('Unknown IP') }}`
+
+                    **Overall Summary:**
+                    {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                    {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                    {% if failed_apps | length == 0 %}
+                    🎉 **ALL SUCCESS!** All {{ app_backup_results | length }} applications were securely backed up.
+                    {% else %}
+                    ⚠️ **ATTENTION!** {{ failed_apps | length }} application(s) **FAILED** to backup:
+                    {% for fapp in failed_apps %}
+                    - ❌ `{{ fapp.name }}`
+                    {% endfor %}
+                    {% endif %}
+                    {% endif %}
+
+                    **Application & Storage Status:**
+                    {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                    {% for res in app_backup_results[:50] %}
+                    {% if res.status == 'Success' %}
+                    - ✅ **{{ res.name }}**: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
+                    {% else %}
+                    - ❌ **{{ res.name }}**: Failed
+                    {% endif %}
+                    {% endfor %}
+                    {% if app_backup_results | length > 50 %}
+                    
+                    *(...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)*
+                    {% endif %}
+                    {% else %}
+                    *(No applications were processed)*
+                    {% endif %}
+
+                    **Completion Time:** `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+          when: "'discord' in (active_notifications | default(['discord']))"
+
+        - name: 7b. Send RECAP Notification to Telegram
+          delegate_to: localhost
+          uri:
+            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              chat_id: "{{ telegram_chat_id }}"
+              parse_mode: "Markdown"
+              text: |
+                📋 *[REPORT] Server Backup Details*
+                *Alias:* `{{ server_alias | default(inventory_hostname) }}`
+                *Server IP:* `{{ inventory_hostname }}`
+                *DRC Target:* `{{ backup_ip | default('Unknown IP') }}`
+
+                *Overall Summary:*
+                {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                {% if failed_apps | length == 0 %}
+                🎉 *ALL SUCCESS!* All {{ app_backup_results | length }} applications were securely backed up.
+                {% else %}
+                ⚠️ *ATTENTION!* {{ failed_apps | length }} application(s) *FAILED* to backup:
+                {% for fapp in failed_apps %}
+                - ❌ `{{ fapp.name }}`
+                {% endfor %}
+                {% endif %}
+                {% endif %}
+
+                *Application & Storage Status:*
+                {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                {% for res in app_backup_results[:50] %}
+                {% if res.status == 'Success' %}
+                - ✅ *{{ res.name }}*: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
+                {% else %}
+                - ❌ *{{ res.name }}*: Failed
+                {% endif %}
+                {% endfor %}
+                {% if app_backup_results | length > 50 %}
+                
+                *(...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)*
+                {% endif %}
+                {% else %}
+                *(No applications were processed)*
+                {% endif %}
+
+                *Completion Time:* `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
+          when: "'telegram' in (active_notifications | default([]))"
+
+        - name: 7c. Send RECAP Notification to WhatsApp
+          delegate_to: localhost
+          uri:
+            url: "{{ whatsapp_api_url }}"
+            method: POST
+            headers:
+              Authorization: "{{ whatsapp_api_key | default('') }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              target: "{{ whatsapp_target_number }}"
+              message: |
+                📋 *[REPORT] Server Backup Details*
+                *Alias:* {{ server_alias | default(inventory_hostname) }}
+                *Server IP:* {{ inventory_hostname }}
+                *DRC Target:* {{ backup_ip | default('Unknown IP') }}
+
+                *Overall Summary:*
+                {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                {% if failed_apps | length == 0 %}
+                🎉 ALL SUCCESS! All {{ app_backup_results | length }} applications were securely backed up.
+                {% else %}
+                ⚠️ ATTENTION! {{ failed_apps | length }} application(s) FAILED to backup:
+                {% for fapp in failed_apps %}
+                - ❌ {{ fapp.name }}
+                {% endfor %}
+                {% endif %}
+                {% endif %}
+
+                *Application & Storage Status:*
+                {% if app_backup_results is defined and app_backup_results | length > 0 %}
+                {% for res in app_backup_results[:50] %}
+                {% if res.status == 'Success' %}
+                - ✅ {{ res.name }}: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
+                {% else %}
+                - ❌ {{ res.name }}: Failed
+                {% endif %}
+                {% endfor %}
+                {% if app_backup_results | length > 50 %}
+                
+                (...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)
+                {% endif %}
+                {% else %}
+                (No applications were processed)
+                {% endif %}
+
+                *Completion Time:* {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+          when: "'whatsapp' in (active_notifications | default([]))"
+      # =========================================================
+      # PHASE 6: RESCUE (IF FATAL ERROR / INIT FAILS)
+      # =========================================================
+      rescue:
+        - name: 8a. Send FATAL FAILURE Notification to Discord
+          delegate_to: localhost
+          uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            status_code: 204
+            body:
+              username: "Ansible DRC Bot"
+              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+              embeds:
+                - title: "❌ [FATAL FAILED] Server Backup Warning!"
+                  color: 15158332 # Bright Red
+                  thumbnail:
+                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+                  description: |
+                    **Alias:** `{{ server_alias | default(inventory_hostname) }}`
+                    **Server IP:** `{{ inventory_hostname }}`
+
+                    **STATUS: FATAL ERROR!** ⚠️
+                    A fatal error (playbook crash) occurred while processing the rsync queue. The process has been fully aborted!
+                    *Please check execution logs in the Ansible Semaphore dashboard for full error details.*
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+          when: "'discord' in (active_notifications | default(['discord']))"
+          ignore_errors: yes
+
+        - name: 8b. Send FATAL FAILURE Notification to Telegram
+          delegate_to: localhost
+          uri:
+            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              chat_id: "{{ telegram_chat_id }}"
+              parse_mode: "Markdown"
+              text: |
+                ❌ *[FATAL FAILED] Server Backup Warning!*
+                *Alias:* `{{ server_alias | default(inventory_hostname) }}`
+                *Server IP:* `{{ inventory_hostname }}`
+
+                *STATUS: FATAL ERROR!* ⚠️
+                A fatal error (playbook crash) occurred while processing the rsync queue. The process was automatically halted!
+          when: "'telegram' in (active_notifications | default([]))"
+          ignore_errors: yes
+
+        - name: 8c. Send FATAL FAILURE Notification to WhatsApp
+          delegate_to: localhost
+          uri:
+            url: "{{ whatsapp_api_url }}"
+            method: POST
+            headers:
+              Authorization: "{{ whatsapp_api_key | default('') }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              target: "{{ whatsapp_target_number }}"
+              message: |
+                ❌ *[FATAL FAILED] Server Backup Warning!*
+                *Alias:* {{ server_alias | default(inventory_hostname) }}
+                *Server IP:* {{ inventory_hostname }}
+
+                *STATUS: FATAL ERROR!* ⚠️
+                A fatal error (playbook crash) occurred while processing the rsync queue. The process was automatically halted!
+          when: "'whatsapp' in (active_notifications | default([]))"
+          ignore_errors: yes

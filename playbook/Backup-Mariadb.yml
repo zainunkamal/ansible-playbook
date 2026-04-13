@@ -1,0 +1,570 @@
+---
+# ==========================================================
+# INVENTORY CONDITION VALIDATION BEFORE MAIN PLAYBOOK RUNS
+# =========================================================
+- name: Validate Inventory Parsing
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Send Inventory Error Notification to Discord
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 204
+        body:
+          username: "Ansible DRC Bot"
+          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+          embeds:
+            - title: "🚨 [FATAL] Failed to Parse Inventory!"
+              color: 16711680
+              description: |
+                **STATUS: FATAL ERROR!** 🚨
+                The process has been **completely aborted** due to a corrupted inventory file or a **Syntax Error** (e.g., using tabs `\t` instead of spaces for indentation, malformed format) or no hosts found under the `db_servers` group.
+                
+                The log output indicates: `We were unable to read either as JSON nor YAML` or `character that cannot start any token`.
+                Please fix the YAML Inventory formatting and ensure it is valid!
+              footer:
+                text: "Automated by Ansible Semaphore"
+      when: 
+        - "(groups['db_servers'] is not defined) or (groups['db_servers'] | length == 0)"
+        - "discord_webhook_url is defined"
+        - "'discord' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Inventory Error Notification to Telegram
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          parse_mode: "Markdown"
+          text: |
+            🚨 *[FATAL] Failed to Parse Inventory!*
+
+            *STATUS: FATAL ERROR!* 🚨
+            The process has been completely aborted because a *Syntax Error* occurred in the inventory file (e.g., tabs read as illegal characters) or the host list is empty.
+            
+            Please fix the YAML inventory format! (Recheck indentation spacing).
+      when: 
+        - "(groups['db_servers'] is not defined) or (groups['db_servers'] | length == 0)"
+        - "telegram_bot_token is defined"
+        - "'telegram' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Inventory Error Notification to WhatsApp
+      uri:
+        url: "{{ whatsapp_api_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ whatsapp_api_key | default('') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ whatsapp_target_number }}"
+          message: |
+            🚨 *[FATAL] Failed to Parse Inventory!*
+
+            *STATUS: FATAL ERROR!* 🚨
+            The process has been completely aborted because the inventory file is corrupted, returned a *Syntax Error* (e.g., tab indentation instead of spaces), or the host group is empty.
+            
+            Please fix the YAML Inventory formatting/spacing!
+      when: 
+        - "(groups['db_servers'] is not defined) or (groups['db_servers'] | length == 0)"
+        - "whatsapp_api_url is defined and whatsapp_target_number is defined"
+        - "'whatsapp' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Halt Execution
+      fail:
+        msg: "Failed to process inventory. Make sure to use spaces (` `) for indentation, not the TAB (`\t`) key."
+      when: "(groups['db_servers'] is not defined) or (groups['db_servers'] | length == 0)"
+
+- name: Database Backup Automation (SQL Dump & Rsync)
+  hosts: db_servers # Can be adjusted if DB servers are grouped differently
+  gather_facts: no
+
+  vars:
+    daily_db_retention_days: "30"
+    monthly_db_retention_days: "365"
+
+  tasks:
+    # =========================================================
+    # CHECK CONNECTION & GATHER FACTS SAFELY
+    # =========================================================
+    - name: Check Connection to Database Server
+      ping:
+      ignore_unreachable: yes
+      register: check_conn
+
+    # =========================================================
+    # UNREACHABLE NOTIFICATIONS (DEAD SERVER / SSH FAILED)
+    # =========================================================
+    - name: Send Unreachable Notification to Discord
+      delegate_to: localhost
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 204
+        body:
+          username: "Ansible DRC Bot"
+          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+          embeds:
+            - title: "🚨 [CRITICAL] Server Unreachable!"
+              color: 16711680
+              thumbnail:
+                url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+              description: |
+                **Alias:** `{{ server_alias | default('Database Server') }}`
+                **Server IP:** `{{ inventory_hostname }}`
+
+                **STATUS: SERVER DOWN / LOGIN FAILED!** 🚨
+                Ansible is unable to establish an SSH connection to the database server. The backup process has been fully aborted for this server.
+              footer:
+                text: "Automated by Ansible Semaphore"
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'discord' in (active_notifications | default(['discord']))"
+
+    - name: Send Unreachable Notification to Telegram
+      delegate_to: localhost
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          parse_mode: "Markdown"
+          text: |
+            🚨 *[CRITICAL] Server Unreachable!*
+            *Alias:* `{{ server_alias | default('Database Server') }}`
+            *Server IP:* `{{ inventory_hostname }}`
+
+            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
+            Ansible is unable to establish an SSH connection to the database server. The backup process is aborted.
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'telegram' in (active_notifications | default([]))"
+
+    - name: Send Unreachable Notification to WhatsApp
+      delegate_to: localhost
+      uri:
+        url: "{{ whatsapp_api_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ whatsapp_api_key | default('') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ whatsapp_target_number }}"
+          message: |
+            🚨 *[CRITICAL] Server Unreachable!*
+            *Alias:* {{ server_alias | default('Database Server') }}
+            *Server IP:* {{ inventory_hostname }}
+
+            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
+            Ansible is unable to establish an SSH connection to the database server. The backup process is aborted.
+      when: 
+        - check_conn.unreachable is defined and check_conn.unreachable
+        - "'whatsapp' in (active_notifications | default([]))"
+
+    - name: Gather Facts
+      setup:
+      when: check_conn.unreachable is not defined
+
+    - name: Set Dynamic Time Variables
+      when: check_conn.unreachable is not defined
+      set_fact:
+        date_daily: "{{ ansible_date_time.date }}"
+        month_last: "{{ lookup('pipe', 'date -d \"-1 month\" +%B-%Y') }}"
+        is_first_day: "{{ ansible_date_time.day == '01' }}"
+
+    # =========================================================
+    # MAIN BLOCK: DUMP, RSYNC, CLEANUP
+    # =========================================================
+    - name: Execute Database Backup
+      when: check_conn.unreachable is not defined
+      block:
+        - name: "1. Create temporary local staging directory"
+          file:
+            path: "~/sql"
+            state: directory
+            mode: '0755'
+
+        - name: "2a. Fetch list of all databases ({{ db_type | default('mariadb') }})"
+          shell: >
+            {% if db_type | default('mariadb') == 'mysql' %}
+            mysql --defaults-extra-file=~/.conf/config.cnf -e 'show databases' -s --skip-column-names
+            {% else %}
+            mariadb --defaults-extra-file=~/.conf/config.cnf -e 'show databases' -s --skip-column-names
+            {% endif %}
+          register: db_list
+          changed_when: false
+
+        - name: "2b. Filter & Sort databases (Ignore System + Custom Exclusions)"
+          set_fact:
+            target_dbs: "{{ db_list.stdout_lines | difference(['information_schema', 'performance_schema', 'mysql', 'sys'] + (exclude_dbs | default([]))) | sort }}"
+
+        - name: "3. Dump & Compress each database to a local file (.gz) (Async Parallel)"
+          shell: >
+            {% if db_type | default('mariadb') == 'mysql' %}
+            mysqldump --defaults-extra-file=~/.conf/config.cnf {{ item }} | gzip -9 > ~/sql/{{ item }}.sql.gz
+            {% else %}
+            mariadb-dump --defaults-extra-file=~/.conf/config.cnf {{ item }} | gzip -9 > ~/sql/{{ item }}.sql.gz
+            {% endif %}
+          loop: "{{ target_dbs }}"
+          async: 10800
+          poll: 0
+          register: dump_jobs
+          ignore_errors: yes
+
+        - name: "3.5. Waiting for Dump Processes (1-Min Checks)..."
+          async_status:
+            jid: "{{ item.ansible_job_id }}"
+          loop: "{{ dump_jobs.results }}"
+          register: dump_results
+          until: dump_results.finished
+          retries: 180
+          delay: 60
+          when: item.ansible_job_id is defined
+          ignore_errors: yes
+
+        - name: "3.6. Check Local File Dump Sizes"
+          shell: "du -sb ~/sql/{{ item }}.sql.gz | cut -f1"
+          loop: "{{ target_dbs }}"
+          register: size_after_res
+          ignore_errors: yes
+
+        - name: "Record Database Backup Statuses"
+          set_fact:
+            db_backup_results: "{{ db_backup_results | default([]) + [db_item] }}"
+          vars:
+            raw_after: "{{ size_after_res.results[idx].stdout | default('0') | regex_replace('[^0-9]', '') }}"
+            size_after: "{{ (raw_after if raw_after | length > 0 else '0') | int }}"
+            status: "{{ 'Success' if not (dump_results.results[idx].failed | default(true)) else 'Failed' }}"
+            db_item:
+              name: "{{ item }}"
+              status: "{{ status }}"
+              total_size: "{{ size_after | filesizeformat }}"
+          loop: "{{ target_dbs }}"
+          loop_control:
+            index_var: idx
+
+        - name: "4. Create Date Directory on Backup Server (DRC)"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            "mkdir -p {{ backup_path }}/sql/daily/{{ date_daily }}"
+
+        - name: "5. (DAILY) Rsync SQL folder to Backup Server"
+          shell: >
+            rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
+            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            ~/sql/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/daily/{{ date_daily }}/
+
+        - name: "6. (DAILY) Delete daily backup folders older than {{ daily_db_retention_days }} days"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            "find {{ backup_path }}/sql/daily -mindepth 1 -maxdepth 1 -type d -mtime +{{ daily_db_retention_days }} -exec rm -rf {} \;"
+
+        # ---------------------------------------------------------
+        # MONTHLY BACKUP (Only runs on the 1st of the month)
+        # ---------------------------------------------------------
+        - name: "7. (MONTHLY) Create Month Directory on Backup Server"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            "mkdir -p {{ backup_path }}/sql/monthly/{{ month_last }}"
+          when: is_first_day
+
+        - name: "8. (MONTHLY) Rsync SQL folder to Monthly Backup Server"
+          shell: >
+            rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
+            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            ~/sql/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/monthly/{{ month_last }}/
+          when: is_first_day
+
+        - name: "9. (MONTHLY) Delete monthly backup folders older than {{ monthly_db_retention_days }} days"
+          shell: >
+            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            "find {{ backup_path }}/sql/monthly -mindepth 1 -maxdepth 1 -type d -mtime +{{ monthly_db_retention_days }} -exec rm -rf {} \;"
+          when: is_first_day
+
+        # ---------------------------------------------------------
+        # LOCAL CLEANUP & NOTIFICATIONS
+        # ---------------------------------------------------------
+        - name: "10. Delete temporary SQL dump files on the local server"
+          file:
+            path: "~/sql"
+            state: absent
+
+        - name: 11a. Send RECAP Notification to Discord
+          delegate_to: localhost 
+          uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            status_code: 204
+            body:
+              username: "Ansible DRC Bot"
+              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+              embeds:
+                - title: "📋 [REPORT] Database Backup Details ({{ db_type | default('mariadb') | upper }})"
+                  color: 3066993 
+                  thumbnail:
+                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+                  description: |
+                    **Alias:** `{{ server_alias | default('Database Server') }}`
+                    **Server IP:** `{{ inventory_hostname }}`
+                    **DRC Target:** `{{ backup_ip | default('Unknown IP') }}`
+                    
+                    **Overall Summary:**
+                    {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                    {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                    {% if failed_dbs | length == 0 %}
+                    🎉 **ALL SUCCESS!** All {{ db_backup_results | length }} databases were securely backed up.
+                    {% else %}
+                    ⚠️ **ATTENTION!** {{ failed_dbs | length }} database(s) **FAILED** to backup:
+                    {% for fdb in failed_dbs %}
+                    - ❌ `{{ fdb.name }}`
+                    {% endfor %}
+                    {% endif %}
+                    {% endif %}
+
+                    **Status & Storage Size:**
+                    {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                    {% for db in db_backup_results[:50] %}
+                    {% if db.status == 'Success' %}
+                    - ✅ **{{ db.name }}**: Success (📦 {{ db.total_size | default('N/A') }})
+                    {% else %}
+                    - ❌ **{{ db.name }}**: Failed (Dump Error)
+                    {% endif %}
+                    {% endfor %}
+                    {% if db_backup_results | length > 50 %}
+                    
+                    *(...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)*
+                    {% endif %}
+                    {% else %}
+                    *(No databases were processed)*
+                    {% endif %}
+
+                    **Completion Time:** `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+          when: "'discord' in (active_notifications | default(['discord']))"
+
+        - name: 11b. Send RECAP Notification to Telegram
+          delegate_to: localhost
+          uri:
+            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              chat_id: "{{ telegram_chat_id }}"
+              parse_mode: "Markdown"
+              text: |
+                📋 *[REPORT] Database Backup Details ({{ db_type | default('mariadb') | upper }})*
+                *Alias:* `{{ server_alias | default('Database Server') }}`
+                *Server IP:* `{{ inventory_hostname }}`
+                *DRC Target:* `{{ backup_ip | default('Unknown IP') }}`
+
+                *Overall Summary:*
+                {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                {% if failed_dbs | length == 0 %}
+                🎉 *ALL SUCCESS!* All {{ db_backup_results | length }} databases were securely backed up.
+                {% else %}
+                ⚠️ *ATTENTION!* {{ failed_dbs | length }} database(s) *FAILED* to backup:
+                {% for fdb in failed_dbs %}
+                - ❌ `{{ fdb.name }}`
+                {% endfor %}
+                {% endif %}
+                {% endif %}
+
+                *Status & Storage Size:*
+                {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                {% for db in db_backup_results[:50] %}
+                {% if db.status == 'Success' %}
+                - ✅ *{{ db.name }}*: Success (📦 {{ db.total_size | default('N/A') }})
+                {% else %}
+                - ❌ *{{ db.name }}*: Failed
+                {% endif %}
+                {% endfor %}
+                {% if db_backup_results | length > 50 %}
+                
+                *(...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)*
+                {% endif %}
+                {% else %}
+                *(No databases were processed)*
+                {% endif %}
+                
+                *Completion Time:* `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
+          when: "'telegram' in (active_notifications | default([]))"
+
+        - name: 11c. Send RECAP Notification to WhatsApp
+          delegate_to: localhost
+          uri:
+            url: "{{ whatsapp_api_url }}"
+            method: POST
+            headers:
+              Authorization: "{{ whatsapp_api_key | default('') }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              target: "{{ whatsapp_target_number }}"
+              message: |
+                📋 *[REPORT] Database Backup Details ({{ db_type | default('mariadb') | upper }})*
+                *Alias:* {{ server_alias | default('Database Server') }}
+                *Server IP:* {{ inventory_hostname }}
+                *DRC Target:* {{ backup_ip | default('Unknown IP') }}
+
+                *Overall Summary:*
+                {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
+                {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                {% if failed_dbs | length == 0 %}
+                🎉 ALL SUCCESS! All {{ db_backup_results | length }} databases were securely backed up.
+                {% else %}
+                ⚠️ ATTENTION! {{ failed_dbs | length }} database(s) FAILED to backup:
+                {% for fdb in failed_dbs %}
+                - ❌ {{ fdb.name }}
+                {% endfor %}
+                {% endif %}
+                {% endif %}
+
+                *Status & Storage Size:*
+                {% if db_backup_results is defined and db_backup_results | length > 0 %}
+                {% for db in db_backup_results[:50] %}
+                {% if db.status == 'Success' %}
+                - ✅ {{ db.name }}: Success (📦 {{ db.total_size | default('N/A') }})
+                {% else %}
+                - ❌ {{ db.name }}: Failed
+                {% endif %}
+                {% endfor %}
+                {% if db_backup_results | length > 50 %}
+                
+                (...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)
+                {% endif %}
+                {% else %}
+                *(No databases were processed)*
+                {% endif %}
+
+                *Completion Time:* {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+          when: "'whatsapp' in (active_notifications | default([]))"
+
+      # =========================================================
+      # RESCUE PHASE (IF DUMP / RSYNC FAILS)
+      # =========================================================
+      rescue:
+        - name: 12a. Send FAILURE Notification to Discord
+          delegate_to: localhost 
+          uri:
+            url: "{{ discord_webhook_url }}"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            status_code: 204
+            body:
+              username: "Ansible DRC Bot"
+              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+              embeds:
+                - title: "❌ [FAILED] Database Backup Warning!"
+                  color: 15158332
+                  thumbnail:
+                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
+                  description: |
+                    **Alias:** `{{ server_alias | default('Database Server') }}`
+                    **Server IP:** `{{ inventory_hostname }}`
+                    
+                    **STATUS: FAILED TO DUMP / RSYNC DB!** ⚠️
+                    An error occurred while executing the database dump or sync to DRC (`{{ backup_ip | default('Unknown IP') }}`).
+                    
+                    {% if target_dbs is defined %}
+                    **Affected Databases:**
+                    {% for db in target_dbs[:50] %}
+                    - ❌ {{ db }}
+                    {% endfor %}
+                    {% if target_dbs | length > 50 %}
+                    *(...and {{ (target_dbs | length) - 50 }} more databases)*
+                    {% endif %}
+                    {% endif %}
+                    
+                    *Please check execution logs in the Ansible Semaphore dashboard.*
+                  footer:
+                    text: "Automated by Ansible Semaphore"
+          when: "'discord' in (active_notifications | default(['discord']))"
+          ignore_errors: yes
+
+        - name: 12b. Send FAILURE Notification to Telegram
+          delegate_to: localhost
+          uri:
+            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              chat_id: "{{ telegram_chat_id }}"
+              parse_mode: "Markdown"
+              text: |
+                ❌ *[FAILED] Database Backup Warning!*
+                *Alias:* `{{ server_alias | default('Database Server') }}`
+                *Server IP:* `{{ inventory_hostname }}`
+
+                *STATUS: FAILED TO DUMP / RSYNC DB!* ⚠️
+                An error occurred while executing the database dump or sync to DRC (`{{ backup_ip | default('Unknown IP') }}`).
+                
+                {% if target_dbs is defined %}
+                *Affected Databases:*
+                {% for db in target_dbs[:50] %}
+                - ❌ {{ db }}
+                {% endfor %}
+                {% if target_dbs | length > 50 %}
+                *(...and {{ (target_dbs | length) - 50 }} more databases)*
+                {% endif %}
+                {% endif %}
+          when: "'telegram' in (active_notifications | default([]))"
+          ignore_errors: yes
+
+        - name: 12c. Send FAILURE Notification to WhatsApp
+          delegate_to: localhost
+          uri:
+            url: "{{ whatsapp_api_url }}"
+            method: POST
+            headers:
+              Authorization: "{{ whatsapp_api_key | default('') }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              target: "{{ whatsapp_target_number }}"
+              message: |
+                ❌ *[FAILED] Database Backup Warning!*
+                *Alias:* {{ server_alias | default('Database Server') }}
+                *Server IP:* {{ inventory_hostname }}
+
+                *STATUS: FAILED TO DUMP / RSYNC DB!* ⚠️
+                An error occurred while executing the database dump or sync to DRC ({{ backup_ip | default('Unknown IP') }}).
+                
+                {% if target_dbs is defined %}
+                *Affected Databases:*
+                {% for db in target_dbs[:50] %}
+                - ❌ {{ db }}
+                {% endfor %}
+                {% if target_dbs | length > 50 %}
+                *(...and {{ (target_dbs | length) - 50 }} more databases)*
+                {% endif %}
+                {% endif %}
+          when: "'whatsapp' in (active_notifications | default([]))"
+          ignore_errors: yes
