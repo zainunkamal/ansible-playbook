@@ -58,22 +58,20 @@ chmod 600 ~/.ssh/authorized_keys
 *(Perform the above integrations across all new App Servers you register in the Inventory).*
 
 ## ⚙️ Inventory and Variable Configuration (Ansible)
-
+### Inventory
 To execute this playbook successfully, your Ansible Inventory (e.g., `Inventory-apps.yml`) must be structured with the app definitions intact. Here is a reference configuration:
 
 ```yaml
 all:
   children:
     app_servers:
+      vars:
+        backup_ip: "x.x.x.x" # IP Server DRC
+        backup_user: "USER_DRC" # User DRC
       hosts:
-        server_app_1:
-          ansible_host: x.x.x.x # IP ADdress
-          ansible_user: "semaphore" # Ansible SSH User
-          
+        <IP_ADDRESS_APPS1>:
           # [Target Identifiers]
           server_alias: "Web Application Farm"
-          backup_user: "backup-drc"
-          backup_ip: "x.x.x.x"     # DRC Destination IP
           backup_path: "/data/backup" # Root DRC Target Directory
           
           # [App Manifest] List apps processed on this specific node
@@ -83,8 +81,10 @@ all:
               exclude: [".env", "storage/logs"] # Prevent junk data sync
             - name: "NAME_APPS2"
               src: "/var/www/html/apps2"
+              exclude: [] # Prevent junk data sync
 ```
-Variable for notification apps
+### Variable
+Variable for notification mariadb
 ```json
 {
   // Enable your preferred channels (discord, telegram, whatsapp) you can chose more than 1
@@ -99,6 +99,20 @@ Variable for notification apps
   "whatsapp_api_url": [],
   "whatsapp_api_key": [],
   "whatsapp_target_number": []
+}
+```
+### Keystore
+If using semaphore, you can use keystore to store your credentials. otherwise you can put it in the variable.
+```json
+{
+  // Port SSH Server Apps
+  "ansible_user": "backup-drc",
+  // Port SSH
+  "ansible_port": 22 
+  // We will use SSH Key for authentication
+  // If you want to use password authentication, you can use the following:
+  // "ansible_ssh_pass": "your_password",
+  // "ansible_become_pass": "your_password"
 }
 ```
 ⬅️ *[Back to Main Page](README.md)*

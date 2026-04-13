@@ -67,23 +67,20 @@ chmod 600 ~/.ssh/authorized_keys
 ```
 
 ## ⚙️ Inventory and Variable Preparation (Ansible)
-
+### Inventory
 To execute this playbook efficiently, construct your Database Ansible Inventory (e.g., `Inventory-db.yml`) using the following mapping structure:
-
 ```yaml
 all:
   children:
     db_servers:
+      vars:
+        backup_ip: "x.x.x.x" # IP Server DRC
+        backup_user: "USER_DRC" # User DRC
       hosts:
-        server_db_1:
-          ansible_host: x.x.x.x # IP Address
-          ansible_user: "usersshdb" # Ansible SSH User
-          
+        <IP_ADDRESS_DB>:
           # [Target Identifiers & Variables]
           server_alias: "Database Cluster Main"
           db_type: "mariadb" # Valid Options: 'mariadb' | 'mysql'
-          backup_user: "user-drc" # User DRC
-          backup_ip: "x.x.x.x"     # DRC Destination IP
           backup_path: "/data/backup" # Root DRC Target Directory
           
           # [Exclusions] Databases to skip explicitly
@@ -93,6 +90,7 @@ all:
             - "performance_schema"
             - "sys"
 ```
+### Variable
 Variable for notification mariadb
 ```json
 {
@@ -110,4 +108,19 @@ Variable for notification mariadb
   "whatsapp_target_number": []
 }
 ```
+### Keystore
+If using semaphore, you can use keystore to store your credentials. otherwise you can put it in the variable.
+```json
+{
+  // Port SSH Server Apps
+  "ansible_user": "backup-drc",
+  // Port SSH
+  "ansible_port": 22 
+  // We will use SSH Key for authentication
+  // If you want to use password authentication, you can use the following:
+  // "ansible_ssh_pass": "your_password",
+  // "ansible_become_pass": "your_password"
+}
+```
+
 ⬅️ *[Back to Main Page](README.md)*
