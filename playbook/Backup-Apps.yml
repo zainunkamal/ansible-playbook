@@ -15,7 +15,7 @@
         body_format: json
         status_code: 204
         body:
-          username: "Ansible DRC Bot"
+          username: "Ansible Backup Bot"
           avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
           embeds:
             - title: "🚨 [FATAL] Failed to Parse Inventory!"
@@ -115,7 +115,7 @@
         body_format: json
         status_code: 204
         body:
-          username: "Ansible DRC Bot"
+          username: "Ansible Backup Bot"
           avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
           embeds:
             - title: "🚨 [CRITICAL] Server Unreachable!"
@@ -230,7 +230,7 @@
 
         - name: "1. Ensure directory structures exist on Backup Server"
           command: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "mkdir -p {{ backup_path }}/web/html/{{ item.name }} {{ backup_path }}/web/daily/{{ item.name }} {{ backup_path }}/web/monthly/{{ item.name }}"
           loop: "{{ apps }}"
           register: mkdir_res
@@ -238,7 +238,7 @@
 
         - name: "1.5. Measure PRE-Backup Size on Remote Server"
           command: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
           loop: "{{ apps }}"
           register: size_before_res
@@ -247,7 +247,7 @@
         - name: "2. Rsync application source code to Backup Server (Async Parallel)"
           command: >
             rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete
-            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            -e "ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes"
             {% for ex in item.exclude | default([]) %}--exclude='{{ ex }}' {% endfor %}
             {{ item.src }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/web/html/{{ item.name }}/
           loop: "{{ apps }}"
@@ -269,7 +269,7 @@
 
         - name: "2.6. Measure POST-Backup Size on Remote Server"
           command: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
           loop: "{{ apps }}"
           register: size_after_res
@@ -277,7 +277,7 @@
 
         - name: "3. (DAILY) Compress HTML directories to Tar.gz (Async Parallel)"
           command: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "tar -czf {{ backup_path }}/web/daily/{{ item.name }}/{{ date_daily }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
           loop: "{{ apps }}"
           async: 10800
@@ -301,14 +301,14 @@
 
         - name: "4. (DAILY) Delete expired daily backups"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "find {{ backup_path }}/web/daily/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ daily_retention_days }} -exec rm -f {} \;"
           loop: "{{ apps }}"
           ignore_errors: yes
 
         - name: "5. (MONTHLY) Compress HTML directories to Monthly Tar.gz (Async Parallel)"
           command: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "tar -czf {{ backup_path }}/web/monthly/{{ item.name }}/{{ month_last }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
           loop: "{{ apps }}"
           async: 10800
@@ -334,7 +334,7 @@
 
         - name: "6. (MONTHLY) Delete expired monthly backups"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "find {{ backup_path }}/web/monthly/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ monthly_retention_days }} -exec rm -f {} \;"
           loop: "{{ apps }}"
           when: is_first_day | default(false)
@@ -376,7 +376,7 @@
             body_format: json
             status_code: 204
             body:
-              username: "Ansible DRC Bot"
+              username: "Ansible Backup Bot"
               avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
               embeds:
                 - title: "📋 [REPORT] Server Backup Details"
@@ -438,7 +438,7 @@
                 📋 *[REPORT] Server Backup Details*
                 *Alias:* `{{ server_alias | default(inventory_hostname) }}`
                 *Server IP:* `{{ inventory_hostname }}`
-                *DRC Target:* `{{ backup_ip | default('Unknown IP') }}`
+                *Backup Target:* `{{ backup_ip | default('Unknown IP') }}`
 
                 *Overall Summary:*
                 {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
@@ -488,7 +488,7 @@
                 📋 *[REPORT] Server Backup Details*
                 *Alias:* {{ server_alias | default(inventory_hostname) }}
                 *Server IP:* {{ inventory_hostname }}
-                *DRC Target:* {{ backup_ip | default('Unknown IP') }}
+                *Backup Target:* {{ backup_ip | default('Unknown IP') }}
 
                 *Overall Summary:*
                 {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
@@ -536,7 +536,7 @@
             body_format: json
             status_code: 204
             body:
-              username: "Ansible DRC Bot"
+              username: "Ansible Backup Bot"
               avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
               embeds:
                 - title: "❌ [FATAL FAILED] Server Backup Warning!"
