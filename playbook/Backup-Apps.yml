@@ -89,10 +89,6 @@
   hosts: app_servers
   gather_facts: no # Disabled so dead servers aren't immediately kicked out
 
-  vars:
-    daily_retention_days: "7"
-    monthly_retention_days: "365"
-
   tasks:
     # =========================================================
     # CHECK CONNECTION (PING) FIRST
@@ -218,7 +214,7 @@
         - name: Set Dynamic Time Variables
           set_fact:
             date_daily: "{{ ansible_date_time.date }}"
-            month_last: "{{ lookup('pipe', 'date -d \"-1 month\" +%B-%Y') }}"
+            month_last: "{{ '%B-%Y' | strftime((ansible_date_time.epoch | int) - 86400) }}"
             is_first_day: "{{ ansible_date_time.day == '01' }}"
 
         # =========================================================
