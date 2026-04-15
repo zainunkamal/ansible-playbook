@@ -236,7 +236,7 @@
                 [{
                   'name': item.path | basename, 
                   'src': item.path,
-                  'exclude': ['cache', 'tmp', 'logs']
+                  'exclude': default_auto_excludes | default([])
                 }]
               }}
           loop: "{{ scanned_folders.files | default([]) }}"
