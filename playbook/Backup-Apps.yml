@@ -347,9 +347,9 @@
             size_diff: "{{ (size_after | int) - (size_before | int) }}"
             status: "{{ 'Success' if not (rsync_results.results[idx].failed | default(true)) and not (tar_daily_results.results[idx].failed | default(false)) else 'Failed' }}"
             indicator: >-
-              {% if size_diff | int > 0 %}🟩 ⬆️ +{{ size_diff | int | abs | filesizeformat }}
-              {% elif size_diff | int < 0 %}🟥 ⬇️ -{{ size_diff | int | abs | filesizeformat }}
-              {% else %}⬜ ➖ Neutral{% endif %}
+              {% if size_diff | int > 0 %}🔼 +{{ size_diff | int | abs | filesizeformat }}
+              {% elif size_diff | int < 0 %}🔽 -{{ size_diff | int | abs | filesizeformat }}
+              {% else %}🟰 Neutral{% endif %}
             app_item:
               name: "{{ item.name }}"
               status: "{{ status }}"
