@@ -218,6 +218,34 @@
             is_first_day: "{{ ansible_date_time.day == '01' }}"
 
         # =========================================================
+        # MODEL 2: AUTO-DISCOVERY APPS (HYBRID / OPTIONAL)
+        # =========================================================
+        - name: "0.1. Scan all application folders in {{ base_web_dir }}"
+          find:
+            paths: "{{ base_web_dir }}"
+            file_type: directory
+            recurse: no
+          register: scanned_folders
+          when: auto_discovery | default(false) | bool
+
+        - name: "0.2. Merge discovered apps into the manual 'apps' list"
+          set_fact:
+            apps: >-
+              {{
+                apps | default([]) + 
+                [{
+                  'name': item.path | basename, 
+                  'src': item.path,
+                  'exclude': ['cache', 'tmp'] # Default exclude 
+                }]
+              }}
+          loop: "{{ scanned_folders.files | default([]) }}"
+          when: 
+            - auto_discovery | default(false) | bool
+            - item.path | basename not in (ignored_folders | default([]))
+            - item.path | basename not in (apps | default([]) | map(attribute='name') | list)
+
+        # =========================================================
         # MAIN PROCESS (PARALLEL APP BACKUP EXECUTION)
         # =========================================================
         - name: Initialize Backup Results Array
@@ -228,7 +256,7 @@
           command: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "mkdir -p {{ backup_path }}/web/html/{{ item.name }} {{ backup_path }}/web/daily/{{ item.name }} {{ backup_path }}/web/monthly/{{ item.name }}"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           register: mkdir_res
           ignore_errors: yes
 
@@ -236,17 +264,17 @@
           command: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           register: size_before_res
           ignore_errors: yes
 
         - name: "2. Rsync application source code to Backup Server (Async Parallel)"
           command: >
-            rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete
+            rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete --delete-excluded
             -e "ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes"
             {% for ex in item.exclude | default([]) %}--exclude='{{ ex }}' {% endfor %}
             {{ item.src }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/web/html/{{ item.name }}/
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           async: 10800
           poll: 0
           register: rsync_jobs
@@ -255,7 +283,7 @@
         - name: "2.5. Waiting for Rsync Processes (1-Min Checks)..."
           async_status:
             jid: "{{ item.ansible_job_id }}"
-          loop: "{{ rsync_jobs.results }}"
+          loop: "{{ rsync_jobs.results | default([]) }}"
           register: rsync_results
           until: rsync_results.finished
           retries: 180
@@ -267,7 +295,7 @@
           command: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "du -sb {{ backup_path }}/web/html/{{ item.name }} | cut -f1"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           register: size_after_res
           ignore_errors: yes
 
@@ -275,7 +303,7 @@
           command: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "tar -czf {{ backup_path }}/web/daily/{{ item.name }}/{{ date_daily }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           async: 10800
           poll: 0
           register: tar_daily_jobs
@@ -287,7 +315,7 @@
         - name: "3.5. Waiting for Daily Tar Processes (1-Min Checks)..."
           async_status:
             jid: "{{ item.ansible_job_id }}"
-          loop: "{{ tar_daily_jobs.results }}"
+          loop: "{{ tar_daily_jobs.results | default([]) }}"
           register: tar_daily_results
           until: tar_daily_results.finished
           retries: 180
@@ -299,14 +327,14 @@
           shell: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "find {{ backup_path }}/web/daily/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ daily_retention_days }} -exec rm -f {} \;"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           ignore_errors: yes
 
         - name: "5. (MONTHLY) Compress HTML directories to Monthly Tar.gz (Async Parallel)"
           command: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "tar -czf {{ backup_path }}/web/monthly/{{ item.name }}/{{ month_last }}.tar.gz -C {{ backup_path }}/web/html {{ item.name }}"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           async: 10800
           poll: 0
           register: tar_monthly_jobs
@@ -320,7 +348,7 @@
         - name: "5.5. Waiting for Monthly Tar Processes (1-Min Checks)..."
           async_status:
             jid: "{{ item.ansible_job_id }}"
-          loop: "{{ tar_monthly_jobs.results }}"
+          loop: "{{ tar_monthly_jobs.results | default([]) }}"
           register: tar_monthly_results
           until: tar_monthly_results.finished
           retries: 180
@@ -332,7 +360,7 @@
           shell: >
             ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }}
             "find {{ backup_path }}/web/monthly/{{ item.name }} -type f -name '*.tar.gz' -mtime +{{ monthly_retention_days }} -exec rm -f {} \;"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           when: is_first_day | default(false)
           ignore_errors: yes
 
@@ -349,13 +377,13 @@
             indicator: >-
               {% if size_diff | int > 0 %}🔼 +{{ size_diff | int | abs | filesizeformat }}
               {% elif size_diff | int < 0 %}🔽 -{{ size_diff | int | abs | filesizeformat }}
-              {% else %}🟰 Neutral{% endif %}
+              {% else %}🟰 Stabil{% endif %}
             app_item:
               name: "{{ item.name }}"
               status: "{{ status }}"
               total_size: "{{ size_after | filesizeformat }}"
               indicator: "{{ indicator }}"
-          loop: "{{ apps }}"
+          loop: "{{ apps | default([]) }}"
           loop_control:
             index_var: idx
 
