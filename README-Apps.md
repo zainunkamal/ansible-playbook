@@ -15,6 +15,7 @@ In its new schema, the playbook operates using a *High-Performance Async* system
 ## ⚙️ Ansible Server / Semaphore Server
 ### *SEMPAHORE*
 In the semaphore UI, we will need ssh-key to access the application server. You need generate key frist then you can add the ssh-key in the semaphore UI.
+
 ![alt text](images/new-keystore.png)
 
 ### *ANSIBLE*
@@ -75,10 +76,12 @@ We create new Repository on SEMAPHORE
 1. Name -> You can give a name for the repository
 2. URL -> You can choose the url which you created
 3. Branch -> You can choose the branch which you created
+
 ![alt text](images/repository.png)
 
 ### Variable Group
 Variable for notification apps. You can choose one or more *discord, telegram, whatsapp*
+
 ![alt text](images/var-group.png)
 ```json
 {
@@ -99,6 +102,7 @@ We create new Inventory on SEMAPHORE
 1. Name -> Just a name for inventory
 2. User Credentials -> We using the user from keystore which we created
 3. Type -> We using Static YAML
+
 ![alt text](images/inventory.png)
 
 ```yaml
@@ -155,6 +159,7 @@ You can still use the manual `apps` list dictionary within your inventory simult
 3. Inventory -> You can choose the inventory which you created
 4. Repository -> You can choose the repository which you created
 5. Variable Group -> You can choose the variable group which you created
+
 ![alt text](images/task-apps.png)
 
 ⬅️ *[Back to Main Page](README.md)*
