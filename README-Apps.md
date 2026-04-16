@@ -136,6 +136,7 @@ all:
           backup_path: "/data/backup" # Root Backup Target Directory
           
           # [App Manifest] List apps processed on this specific node
+          # *you can ignore this if you using auto_discovery: true*
           apps:
             - name: "NAME_APPS1"
               src: "/var/www/html/apps1"
