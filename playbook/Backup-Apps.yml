@@ -377,7 +377,7 @@
             indicator: >-
               {% if size_diff | int > 0 %}🔼 +{{ size_diff | int | abs | filesizeformat }}
               {% elif size_diff | int < 0 %}🔽 -{{ size_diff | int | abs | filesizeformat }}
-              {% else %}🟰 Stabil{% endif %}
+              {% else %} - No Changes{% endif %}
             app_item:
               name: "{{ item.name }}"
               status: "{{ status }}"
