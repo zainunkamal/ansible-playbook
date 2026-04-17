@@ -442,7 +442,7 @@
                     *(No applications were processed)*
                     {% endif %}
 
-                    **Completion Time:** `{{ now(tz='Asia/Jakarta').strftime('%Y-%m-%d %H:%M:%S') }} WIB`
+                    **Completion Time:** `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
                   footer:
                     text: "Automated by Ansible Semaphore"
           when: "'discord' in (active_notifications | default(['discord']))"
@@ -494,7 +494,7 @@
                 *(No applications were processed)*
                 {% endif %}
 
-                *Completion Time:* `{{ now(tz='Asia/Jakarta').strftime('%Y-%m-%d %H:%M:%S') }} WIB`
+                *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
           when: "'telegram' in (active_notifications | default([]))"
 
         - name: 7c. Send RECAP Notification to WhatsApp
@@ -544,7 +544,7 @@
                 (No applications were processed)
                 {% endif %}
 
-                *Completion Time:* `{{ now(tz='Asia/Jakarta').strftime('%Y-%m-%d %H:%M:%S') }} WIB`
+                *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
           when: "'whatsapp' in (active_notifications | default([]))"
       # =========================================================
       # PHASE 6: RESCUE (IF FATAL ERROR / INIT FAILS)
