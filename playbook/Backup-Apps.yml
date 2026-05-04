@@ -620,3 +620,140 @@
                 A fatal error (playbook crash) occurred while processing the rsync queue. The process was automatically halted!
           when: "'whatsapp' in (active_notifications | default([]))"
           ignore_errors: yes
+
+- name: Global Backup Summary Notification
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Send Global Recap to Discord
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        status_code: 204
+        body:
+          username: "Ansible Backup Bot"
+          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
+          embeds:
+            - title: "🌐 [GLOBAL RECAP] Backup Apps Execution Completed"
+              color: 3447003
+              description: |
+                **Backup Execution has finished for all servers.**
+
+                **✅ Successfully Processed Servers:**
+                {% set ns = namespace(found_processed=false, found_unreachable=false) %}
+                {% for host in groups['app_servers'] %}
+                {% if hostvars[host]['check_conn'] is defined and hostvars[host]['check_conn']['unreachable'] is not defined %}
+                {% set ns.found_processed = true %}
+                - {{ hostvars[host]['server_alias'] | default(host) }}
+                {% endif %}
+                {% endfor %}
+                {% if not ns.found_processed %}
+                - *(None)*
+                {% endif %}
+
+                **❌ Unreachable / Failed Servers:**
+                {% for host in groups['app_servers'] %}
+                {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
+                {% set ns.found_unreachable = true %}
+                - {{ hostvars[host]['server_alias'] | default(host) }}
+                {% endif %}
+                {% endfor %}
+                {% if not ns.found_unreachable %}
+                - *(None)*
+                {% endif %}
+              footer:
+                text: "Automated by Ansible Semaphore"
+      when: 
+        - "groups['app_servers'] is defined and groups['app_servers'] | length > 0"
+        - "discord_webhook_url is defined"
+        - "'discord' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Global Recap to Telegram
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          parse_mode: "Markdown"
+          text: |
+            🌐 *[GLOBAL RECAP] Backup Apps Execution Completed*
+
+            *Backup Execution has finished for all servers.*
+
+            *✅ Successfully Processed Servers:*
+            {% set ns = namespace(found_processed=false, found_unreachable=false) %}
+            {% for host in groups['app_servers'] %}
+            {% if hostvars[host]['check_conn'] is defined and hostvars[host]['check_conn']['unreachable'] is not defined %}
+            {% set ns.found_processed = true %}
+            - {{ hostvars[host]['server_alias'] | default(host) }}
+            {% endif %}
+            {% endfor %}
+            {% if not ns.found_processed %}
+            - *(None)*
+            {% endif %}
+
+            *❌ Unreachable / Failed Servers:*
+            {% for host in groups['app_servers'] %}
+            {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
+            {% set ns.found_unreachable = true %}
+            - {{ hostvars[host]['server_alias'] | default(host) }}
+            {% endif %}
+            {% endfor %}
+            {% if not ns.found_unreachable %}
+            - *(None)*
+            {% endif %}
+      when: 
+        - "groups['app_servers'] is defined and groups['app_servers'] | length > 0"
+        - "telegram_bot_token is defined"
+        - "'telegram' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
+
+    - name: Send Global Recap to WhatsApp
+      uri:
+        url: "{{ whatsapp_api_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ whatsapp_api_key | default('') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ whatsapp_target_number }}"
+          message: |
+            🌐 *[GLOBAL RECAP] Backup Apps Execution Completed*
+
+            *Backup Execution has finished for all servers.*
+
+            *✅ Successfully Processed Servers:*
+            {% set ns = namespace(found_processed=false, found_unreachable=false) %}
+            {% for host in groups['app_servers'] %}
+            {% if hostvars[host]['check_conn'] is defined and hostvars[host]['check_conn']['unreachable'] is not defined %}
+            {% set ns.found_processed = true %}
+            - {{ hostvars[host]['server_alias'] | default(host) }}
+            {% endif %}
+            {% endfor %}
+            {% if not ns.found_processed %}
+            - (None)
+            {% endif %}
+
+            *❌ Unreachable / Failed Servers:*
+            {% for host in groups['app_servers'] %}
+            {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
+            {% set ns.found_unreachable = true %}
+            - {{ hostvars[host]['server_alias'] | default(host) }}
+            {% endif %}
+            {% endfor %}
+            {% if not ns.found_unreachable %}
+            - (None)
+            {% endif %}
+      when: 
+        - "groups['app_servers'] is defined and groups['app_servers'] | length > 0"
+        - "whatsapp_api_url is defined and whatsapp_target_number is defined"
+        - "'whatsapp' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
+      ignore_errors: yes
