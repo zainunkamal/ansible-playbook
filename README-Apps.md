@@ -116,16 +116,6 @@ all:
         backup_port: "22"             # Port SSH Server Backup
         daily_retention_days: "7"     # Retentoin of daily (ex 1 week = 7)
         monthly_retention_days: "365" # Retention of monthly (ex 1 year = 365)
-        auto_discovery: true          # (true | false, you can set autodiscovery of apps)
-        base_web_dir: "/var/www/html" # Folder which for autodiscovery
-        ignored_folders:              # Folder which we ignore for backup
-          - "phpmyadmin"
-          - "logs"
-          - "lost+found"
-        default_auto_excludes:        # Folder which is exclude
-          - "logs"
-          - "sessions"
-          - "tmp"
 
       hosts:
         <IP_ADDRESS_APPS1>:
@@ -134,9 +124,19 @@ all:
           # [Target Identifiers]
           server_alias: "Web Application Farm"
           backup_path: "/data/backup" # Root Backup Target Directory
-          
+          auto_discovery: true          # (true | false, you can set autodiscovery of apps)
+          base_web_dir: "/var/www/html" # Folder which for autodiscovery
+          ignored_folders:              # Folder which we ignore for backup
+            - "phpmyadmin"
+            - "logs"
+            - "lost+found"
+          default_auto_excludes:        # Folder which is exclude from auto-discovery
+            - "logs"
+            - "sessions"
+            - "tmp"
+
           # [App Manifest] List apps processed on this specific node
-          # *you can ignore this if you using auto_discovery: true*
+          # We can use hybrid auto-discovery and manual apps list but prevent duplicate (smart filtering)
           apps:
             - name: "NAME_APPS1"
               src: "/var/www/html/apps1"

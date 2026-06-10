@@ -1,6 +1,6 @@
 # 🚀 DRC Backup Automation (Ansible Playbook)
 
-This repository contains **Ansible Playbooks** optimized for executing high-performance backup processes (Application Source Code & SQL Databases) to the *Disaster Recovery Center (DRC)*.
+This repository contains **Ansible Playbooks** optimized for executing high-performance backup processes (Application Source Code & SQL Databases) to the *Backup Server*.
 
 ## ✨ Key Features
 - **Asynchronous Parallel Processing**: Backup processes (Database Dumps, Folder Rsync, Tar) are now executed concurrently in the background, drastically cutting down rotation time compared to sequential processing.
