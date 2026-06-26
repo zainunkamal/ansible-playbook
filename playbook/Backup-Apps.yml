@@ -99,110 +99,6 @@
       register: check_conn
 
     # =========================================================
-    # UNREACHABLE NOTIFICATIONS (DEAD SERVER / SSH FAILED)
-    # =========================================================
-    - name: Send Unreachable Notification to Discord
-      delegate_to: localhost
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        headers:
-          Content-Type: "application/json"
-        body_format: json
-        status_code: 204
-        body:
-          username: "Ansible Backup Bot"
-          avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
-          embeds:
-            - title: "🚨 [CRITICAL] Server Unreachable!"
-              color: 16711680 # Dark Red
-              thumbnail:
-                url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
-              description: |
-                **Alias:** `{{ server_alias | default('Unknown Server') }}`
-                **Server IP:** `{{ inventory_hostname }}`
-
-                **Failed Backup Applications:**
-                {% if apps is defined %}
-                {% for app in apps %}
-                - 🚨 {{ app.name }}
-                {% endfor %}
-                {% else %}
-                - 🚨 *(No 'apps' configuration found in inventory)*
-                {% endif %}
-
-                **STATUS: SERVER DOWN / LOGIN FAILED!** 🚨
-                Ansible is unable to establish an SSH connection to the application server. The backup process has been fully aborted for this server.
-              footer:
-                text: "Automated by Ansible Semaphore"
-      when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
-        - "'discord' in (active_notifications | default(['discord']))"
-
-    - name: Send Unreachable Notification to Telegram
-      delegate_to: localhost
-      uri:
-        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
-        method: POST
-        headers:
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          chat_id: "{{ telegram_chat_id }}"
-          parse_mode: "Markdown"
-          text: |
-            🚨 *[CRITICAL] Server Unreachable!*
-            *Alias:* `{{ server_alias | default('Unknown Server') }}`
-            *Server IP:* `{{ inventory_hostname }}`
-
-            *Failed Backup Applications:*
-            {% if apps is defined %}
-            {% for app in apps %}
-            - 🚨 {{ app.name }}
-            {% endfor %}
-            {% else %}
-            - 🚨 *(No 'apps' configuration found in inventory)*
-            {% endif %}
-
-            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
-            Ansible is unable to establish an SSH connection to the application server. The backup process is aborted.
-      when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
-        - "'telegram' in (active_notifications | default([]))"
-
-    - name: Send Unreachable Notification to WhatsApp
-      delegate_to: localhost
-      uri:
-        url: "{{ whatsapp_api_url }}"
-        method: POST
-        headers:
-          Authorization: "{{ whatsapp_api_key | default('') }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          target: "{{ whatsapp_target_number }}"
-          message: |
-            🚨 *[CRITICAL] Server Unreachable!*
-            *Alias:* {{ server_alias | default('Unknown Server') }}
-            *Server IP:* {{ inventory_hostname }}
-
-            *Failed Backup Applications:*
-            {% if apps is defined %}
-            {% for app in apps %}
-            - 🚨 {{ app.name }}
-            {% endfor %}
-            {% else %}
-            - 🚨 *(No 'apps' configuration found in inventory)*
-            {% endif %}
-
-            *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
-            Ansible is unable to establish an SSH connection to the application server. The backup process is aborted.
-      when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
-        - "'whatsapp' in (active_notifications | default([]))"
-
-
-    # =========================================================
     # IF SERVER IS ALIVE, PROCEED TO BACKUP BLOCK
     # =========================================================
     - name: Execute Backup (Only If Server Is Alive)
@@ -387,239 +283,10 @@
           loop_control:
             index_var: idx
 
-        # =========================================================
-        # FINAL RECAP ALERTS
-        # =========================================================
-        - name: 7a. Send RECAP Notification to Discord
-          delegate_to: localhost
-          uri:
-            url: "{{ discord_webhook_url }}"
-            method: POST
-            headers:
-              Content-Type: "application/json"
-            body_format: json
-            status_code: 204
-            body:
-              username: "Ansible Backup Bot"
-              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
-              embeds:
-                - title: "📋 [REPORT] Server Backup Details"
-                  color: 3066993 # Green
-                  thumbnail:
-                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
-                  description: |
-                    **Alias:** `{{ server_alias | default(inventory_hostname) }}`
-                    **Server IP:** `{{ inventory_hostname }}`
-                    **DRC Target:** `{{ backup_ip | default('Unknown IP') }}`
-
-                    **Overall Summary:**
-                    {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                    {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                    {% if failed_apps | length == 0 %}
-                    🎉 **ALL SUCCESS!** All {{ app_backup_results | length }} applications were securely backed up.
-                    {% else %}
-                    ⚠️ **ATTENTION!** {{ failed_apps | length }} application(s) **FAILED** to backup:
-                    {% for fapp in failed_apps %}
-                    - ❌ `{{ fapp.name }}`
-                    {% endfor %}
-                    {% endif %}
-                    {% endif %}
-
-                    **Application & Storage Status:**
-                    {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                    {% for res in app_backup_results[:50] %}
-                    {% if res.status == 'Success' %}
-                    - ✅ **{{ res.name }}**: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
-                    {% else %}
-                    - ❌ **{{ res.name }}**: Failed
-                    {% endif %}
-                    {% endfor %}
-                    {% if app_backup_results | length > 50 %}
-                    
-                    *(...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)*
-                    {% endif %}
-                    {% else %}
-                    *(No applications were processed)*
-                    {% endif %}
-
-                    **Completion Time:** `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
-                  footer:
-                    text: "Automated by Ansible Semaphore"
-          when: "'discord' in (active_notifications | default(['discord']))"
-
-        - name: 7b. Send RECAP Notification to Telegram
-          delegate_to: localhost
-          uri:
-            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
-            method: POST
-            headers:
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              chat_id: "{{ telegram_chat_id }}"
-              parse_mode: "Markdown"
-              text: |
-                📋 *[REPORT] Server Backup Details*
-                *Alias:* `{{ server_alias | default(inventory_hostname) }}`
-                *Server IP:* `{{ inventory_hostname }}`
-                *Backup Target:* `{{ backup_ip | default('Unknown IP') }}`
-
-                *Overall Summary:*
-                {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                {% if failed_apps | length == 0 %}
-                🎉 *ALL SUCCESS!* All {{ app_backup_results | length }} applications were securely backed up.
-                {% else %}
-                ⚠️ *ATTENTION!* {{ failed_apps | length }} application(s) *FAILED* to backup:
-                {% for fapp in failed_apps %}
-                - ❌ `{{ fapp.name }}`
-                {% endfor %}
-                {% endif %}
-                {% endif %}
-
-                *Application & Storage Status:*
-                {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                {% for res in app_backup_results[:50] %}
-                {% if res.status == 'Success' %}
-                - ✅ *{{ res.name }}*: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
-                {% else %}
-                - ❌ *{{ res.name }}*: Failed
-                {% endif %}
-                {% endfor %}
-                {% if app_backup_results | length > 50 %}
-                
-                *(...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)*
-                {% endif %}
-                {% else %}
-                *(No applications were processed)*
-                {% endif %}
-
-                *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
-          when: "'telegram' in (active_notifications | default([]))"
-
-        - name: 7c. Send RECAP Notification to WhatsApp
-          delegate_to: localhost
-          uri:
-            url: "{{ whatsapp_api_url }}"
-            method: POST
-            headers:
-              Authorization: "{{ whatsapp_api_key | default('') }}"
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              target: "{{ whatsapp_target_number }}"
-              message: |
-                📋 *[REPORT] Server Backup Details*
-                *Alias:* {{ server_alias | default(inventory_hostname) }}
-                *Server IP:* {{ inventory_hostname }}
-                *Backup Target:* {{ backup_ip | default('Unknown IP') }}
-
-                *Overall Summary:*
-                {% set failed_apps = app_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                {% if failed_apps | length == 0 %}
-                🎉 ALL SUCCESS! All {{ app_backup_results | length }} applications were securely backed up.
-                {% else %}
-                ⚠️ ATTENTION! {{ failed_apps | length }} application(s) FAILED to backup:
-                {% for fapp in failed_apps %}
-                - ❌ {{ fapp.name }}
-                {% endfor %}
-                {% endif %}
-                {% endif %}
-
-                *Application & Storage Status:*
-                {% if app_backup_results is defined and app_backup_results | length > 0 %}
-                {% for res in app_backup_results[:50] %}
-                {% if res.status == 'Success' %}
-                - ✅ {{ res.name }}: Success (📦 {{ res.total_size | default('N/A') }} {{ res.indicator | default('➖') }})
-                {% else %}
-                - ❌ {{ res.name }}: Failed
-                {% endif %}
-                {% endfor %}
-                {% if app_backup_results | length > 50 %}
-                
-                (...and {{ (app_backup_results | length) - 50 }} more apps. Please check Ansible logs for full details.)
-                {% endif %}
-                {% else %}
-                (No applications were processed)
-                {% endif %}
-
-                *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
-          when: "'whatsapp' in (active_notifications | default([]))"
-      # =========================================================
-      # PHASE 6: RESCUE (IF FATAL ERROR / INIT FAILS)
-      # =========================================================
       rescue:
-        - name: 8a. Send FATAL FAILURE Notification to Discord
-          delegate_to: localhost
-          uri:
-            url: "{{ discord_webhook_url }}"
-            method: POST
-            headers:
-              Content-Type: "application/json"
-            body_format: json
-            status_code: 204
-            body:
-              username: "Ansible Backup Bot"
-              avatar_url: "https://cdn-icons-png.flaticon.com/512/814/814406.png"
-              embeds:
-                - title: "❌ [FATAL FAILED] Server Backup Warning!"
-                  color: 15158332 # Bright Red
-                  thumbnail:
-                    url: "https://upload.wikimedia.org/wikipedia/commons/a/a2/Coat_of_arms_of_Bekasi.png"
-                  description: |
-                    **Alias:** `{{ server_alias | default(inventory_hostname) }}`
-                    **Server IP:** `{{ inventory_hostname }}`
-
-                    **STATUS: FATAL ERROR!** ⚠️
-                    A fatal error (playbook crash) occurred while processing the rsync queue. The process has been fully aborted!
-                    *Please check execution logs in the Ansible Semaphore dashboard for full error details.*
-                  footer:
-                    text: "Automated by Ansible Semaphore"
-          when: "'discord' in (active_notifications | default(['discord']))"
-          ignore_errors: yes
-
-        - name: 8b. Send FATAL FAILURE Notification to Telegram
-          delegate_to: localhost
-          uri:
-            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
-            method: POST
-            headers:
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              chat_id: "{{ telegram_chat_id }}"
-              parse_mode: "Markdown"
-              text: |
-                ❌ *[FATAL FAILED] Server Backup Warning!*
-                *Alias:* `{{ server_alias | default(inventory_hostname) }}`
-                *Server IP:* `{{ inventory_hostname }}`
-
-                *STATUS: FATAL ERROR!* ⚠️
-                A fatal error (playbook crash) occurred while processing the rsync queue. The process was automatically halted!
-          when: "'telegram' in (active_notifications | default([]))"
-          ignore_errors: yes
-
-        - name: 8c. Send FATAL FAILURE Notification to WhatsApp
-          delegate_to: localhost
-          uri:
-            url: "{{ whatsapp_api_url }}"
-            method: POST
-            headers:
-              Authorization: "{{ whatsapp_api_key | default('') }}"
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              target: "{{ whatsapp_target_number }}"
-              message: |
-                ❌ *[FATAL FAILED] Server Backup Warning!*
-                *Alias:* {{ server_alias | default(inventory_hostname) }}
-                *Server IP:* {{ inventory_hostname }}
-
-                *STATUS: FATAL ERROR!* ⚠️
-                A fatal error (playbook crash) occurred while processing the rsync queue. The process was automatically halted!
-          when: "'whatsapp' in (active_notifications | default([]))"
-          ignore_errors: yes
+        - name: Set Fatal Error Fact
+          set_fact:
+            backup_fatal_error: true
 
 - name: Backup Summary Notification
   hosts: localhost
@@ -640,28 +307,32 @@
             - title: "📋 [SUMMARY] Backup Apps Completed"
               color: 3447003
               description: |
-                **Backup execution has finished for all servers.**
+                **Backup execution has finished for all servers to Backup Server ({{ hostvars[groups['app_servers'][0]]['backup_ip'] | default('10.100.19.50') }}).**
 
-                **Server Status:**
+                **Server Backup Status:**
                 {% for host in groups['app_servers'] %}
                 {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
-                - 🔌 **{{ hostvars[host]['server_alias'] | default(host) }}** — Unreachable
+                {{ loop.index }}. 🖥️ **{{ hostvars[host]['server_alias'] | default(host) }}** (`{{ host }}`) — **UNREACHABLE** ⚠️
+                   • **Detail:** Gagal melakukan koneksi SSH ke server target.
+                {% elif hostvars[host]['backup_fatal_error'] is defined and hostvars[host]['backup_fatal_error'] %}
+                {{ loop.index }}. 🖥️ **{{ hostvars[host]['server_alias'] | default(host) }}** (`{{ host }}`) — **FATAL ERROR** 🚨
+                   • **Detail:** Playbook crash saat eksekusi rsync/tar. Silakan periksa log di dashboard Semaphore.
                 {% else %}
                 {% set results = hostvars[host]['app_backup_results'] | default([]) %}
-                {% set failed = results | selectattr('status', 'equalto', 'Failed') | list %}
-                {% if results | length == 0 %}
-                - ⚠️ **{{ hostvars[host]['server_alias'] | default(host) }}** — No apps processed
-                {% elif failed | length == 0 %}
-                - ✅ **{{ hostvars[host]['server_alias'] | default(host) }}** — All {{ results | length }} app(s) backed up successfully
-                {% elif failed | length == results | length %}
-                - ❌ **{{ hostvars[host]['server_alias'] | default(host) }}** — All {{ results | length }} app(s) failed{% for f in failed %}: `{{ f.name }}`{% endfor %}
-                {% else %}
-                - ⚠️ **{{ hostvars[host]['server_alias'] | default(host) }}** — {{ failed | length }}/{{ results | length }} failed{% for f in failed %}: `{{ f.name }}`{% endfor %}
+                {% set success_apps = results | selectattr('status', 'equalto', 'Success') | list %}
+                {% set failed_apps = results | selectattr('status', 'equalto', 'Failed') | list %}
+                {% set success_count = success_apps | length %}
+                {% set total_count = results | length %}
+                {{ loop.index }}. 🖥️ **{{ hostvars[host]['server_alias'] | default(host) }}** (`{{ host }}`) — **{{ success_count }}/{{ total_count }} Sukses** {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
+                   • **Sukses:** {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+                   • **Gagal:** {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
                 {% endif %}
+                {% if not loop.last %}
+
                 {% endif %}
                 {% endfor %}
 
-                **Completion Time:** `{{ lookup('pipe', 'TZ=Asia/Jakarta date +\"%Y-%m-%d %H:%M:%S\"') }} WIB`
+                📅 **Completion Time:** `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
               footer:
                 text: "Automated by Ansible Semaphore"
       when: 
@@ -682,29 +353,32 @@
           parse_mode: "Markdown"
           text: |
             📋 *[SUMMARY] Backup Apps Completed*
+            Backup execution has finished for all servers to Backup Server ({{ hostvars[groups['app_servers'][0]]['backup_ip'] | default('10.100.19.50') }})
 
-            Backup execution has finished for all servers.
-
-            *Server Status:*
+            *Server Backup Status:*
             {% for host in groups['app_servers'] %}
             {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
-            - 🔌 *{{ hostvars[host]['server_alias'] | default(host) }}* — Unreachable
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* (`{{ host }}`) — *UNREACHABLE* ⚠️
+               • *Detail:* Gagal melakukan koneksi SSH ke server target.
+            {% elif hostvars[host]['backup_fatal_error'] is defined and hostvars[host]['backup_fatal_error'] %}
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* (`{{ host }}`) — *FATAL ERROR* 🚨
+               • *Detail:* Playbook crash saat eksekusi rsync/tar. Silakan periksa log di dashboard Semaphore.
             {% else %}
             {% set results = hostvars[host]['app_backup_results'] | default([]) %}
-            {% set failed = results | selectattr('status', 'equalto', 'Failed') | list %}
-            {% if results | length == 0 %}
-            - ⚠️ *{{ hostvars[host]['server_alias'] | default(host) }}* — No apps processed
-            {% elif failed | length == 0 %}
-            - ✅ *{{ hostvars[host]['server_alias'] | default(host) }}* — All {{ results | length }} app(s) backed up successfully
-            {% elif failed | length == results | length %}
-            - ❌ *{{ hostvars[host]['server_alias'] | default(host) }}* — All {{ results | length }} app(s) failed{% for f in failed %}: `{{ f.name }}`{% endfor %}
-            {% else %}
-            - ⚠️ *{{ hostvars[host]['server_alias'] | default(host) }}* — {{ failed | length }}/{{ results | length }} failed{% for f in failed %}: `{{ f.name }}`{% endfor %}
+            {% set success_apps = results | selectattr('status', 'equalto', 'Success') | list %}
+            {% set failed_apps = results | selectattr('status', 'equalto', 'Failed') | list %}
+            {% set success_count = success_apps | length %}
+            {% set total_count = results | length %}
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* (`{{ host }}`) — *{{ success_count }}/{{ total_count }} Sukses* {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
+               • *Sukses:* {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Gagal:* {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
             {% endif %}
+            {% if not loop.last %}
+
             {% endif %}
             {% endfor %}
 
-            *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +\"%Y-%m-%d %H:%M:%S\"') }} WIB`
+            📅 *Completion Time:* `{{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB`
       when: 
         - "groups['app_servers'] is defined and groups['app_servers'] | length > 0"
         - "telegram_bot_token is defined"
@@ -723,29 +397,32 @@
           target: "{{ whatsapp_target_number }}"
           message: |
             📋 *[SUMMARY] Backup Apps Completed*
+            Backup execution has finished for all servers to Backup Server ({{ hostvars[groups['app_servers'][0]]['backup_ip'] | default('10.100.19.50') }})
 
-            Backup execution has finished for all servers.
-
-            *Server Status:*
+            *Server Backup Status:*
             {% for host in groups['app_servers'] %}
             {% if hostvars[host]['check_conn'] is not defined or (hostvars[host]['check_conn']['unreachable'] is defined and hostvars[host]['check_conn']['unreachable']) %}
-            - 🔌 {{ hostvars[host]['server_alias'] | default(host) }} — Unreachable
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* ({{ host }}) — *UNREACHABLE* ⚠️
+               • *Detail:* Gagal melakukan koneksi SSH ke server target.
+            {% elif hostvars[host]['backup_fatal_error'] is defined and hostvars[host]['backup_fatal_error'] %}
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* ({{ host }}) — *FATAL ERROR* 🚨
+               • *Detail:* Playbook crash saat eksekusi rsync/tar. Silakan periksa log di dashboard Semaphore.
             {% else %}
             {% set results = hostvars[host]['app_backup_results'] | default([]) %}
-            {% set failed = results | selectattr('status', 'equalto', 'Failed') | list %}
-            {% if results | length == 0 %}
-            - ⚠️ {{ hostvars[host]['server_alias'] | default(host) }} — No apps processed
-            {% elif failed | length == 0 %}
-            - ✅ {{ hostvars[host]['server_alias'] | default(host) }} — All {{ results | length }} app(s) backed up successfully
-            {% elif failed | length == results | length %}
-            - ❌ {{ hostvars[host]['server_alias'] | default(host) }} — All {{ results | length }} app(s) failed{% for f in failed %}: {{ f.name }}{% endfor %}
-            {% else %}
-            - ⚠️ {{ hostvars[host]['server_alias'] | default(host) }} — {{ failed | length }}/{{ results | length }} failed{% for f in failed %}: {{ f.name }}{% endfor %}
+            {% set success_apps = results | selectattr('status', 'equalto', 'Success') | list %}
+            {% set failed_apps = results | selectattr('status', 'equalto', 'Failed') | list %}
+            {% set success_count = success_apps | length %}
+            {% set total_count = results | length %}
+            {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* ({{ host }}) — *{{ success_count }}/{{ total_count }} Sukses* {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
+               • *Sukses:* {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Gagal:* {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
             {% endif %}
+            {% if not loop.last %}
+
             {% endif %}
             {% endfor %}
 
-            *Completion Time:* {{ lookup('pipe', 'TZ=Asia/Jakarta date +\"%Y-%m-%d %H:%M:%S\"') }} WIB
+            📅 *Completion Time:* {{ lookup('pipe', 'TZ=Asia/Jakarta date +"%Y-%m-%d %H:%M:%S"') }} WIB
       when: 
         - "groups['app_servers'] is defined and groups['app_servers'] | length > 0"
         - "whatsapp_api_url is defined and whatsapp_target_number is defined"
