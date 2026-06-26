@@ -44,6 +44,7 @@ sudo apt install acl -y
 **3. Bypass Read Limitation (*Set ACL for application directories*)**
 This function allows the *backup-user* user to read and execute the source folders without being able to write or corrupt them.
 ```bash
+sudo setfacl -d -m u:backup-user:rx /var/www/html/
 sudo setfacl -R -m u:backup-user:rx /var/www/html/
 ```
 
