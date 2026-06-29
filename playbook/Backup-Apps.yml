@@ -324,8 +324,10 @@
                 {% set success_count = success_apps | length %}
                 {% set total_count = results | length %}
                 {{ loop.index }}. 🖥️ **{{ hostvars[host]['server_alias'] | default(host) }}** (`{{ host }}`) — **{{ success_count }}/{{ total_count }} Sukses** {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
-                   • **Sukses:** {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
-                   • **Gagal:** {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+                   • **Sukses:**
+                   {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+                   • **Gagal:**
+                   {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
                 {% endif %}
                 {% if not loop.last %}
 
@@ -370,8 +372,10 @@
             {% set success_count = success_apps | length %}
             {% set total_count = results | length %}
             {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* (`{{ host }}`) — *{{ success_count }}/{{ total_count }} Sukses* {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
-               • *Sukses:* {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
-               • *Gagal:* {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Sukses:*
+               {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Gagal:*
+               {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
             {% endif %}
             {% if not loop.last %}
 
@@ -414,8 +418,10 @@
             {% set success_count = success_apps | length %}
             {% set total_count = results | length %}
             {{ loop.index }}. 🖥️ *{{ hostvars[host]['server_alias'] | default(host) }}* ({{ host }}) — *{{ success_count }}/{{ total_count }} Sukses* {% if failed_apps | length == 0 %}✅{% else %}❌{% endif %}
-               • *Sukses:* {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
-               • *Gagal:* {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Sukses:*
+               {% if success_count > 0 %}{% for s in success_apps %}`{{ s.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
+               • *Gagal:*
+               {% if failed_apps | length > 0 %}{% for f in failed_apps %}`{{ f.name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %}
             {% endif %}
             {% if not loop.last %}
 
