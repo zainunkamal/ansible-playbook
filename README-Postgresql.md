@@ -42,23 +42,18 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO backup_user;
 > GRANT pg_read_all_data TO backup_user;
 > ```
 
-### 🛡️ 2. Client Credential Shell & System Setup (.pgpass)
-The creation of this `.pgpass` file is absolute for security purposes, allowing the *automatic bot (Ansible)* to inject `pg_dump` commands unobstructed by *password shell prompts* when the script runs covertly.
+### 🛡️ 2. Client Credential & System Setup (`PGPASSWORD`)
+The playbook authenticates `pg_dump` and `psql` commands using the `PGPASSWORD` environment variable, which is injected automatically at runtime from the Ansible inventory variable `pg_password`. This eliminates the need to manually create and maintain `.pgpass` files on every server node — especially beneficial for **Patroni/HA clusters** where multiple nodes exist.
 ```bash
-# 1. Create Unix User
+# 1. Create Unix User (for Ansible SSH access)
 sudo useradd --system --create-home --user-group --shell /bin/bash backup-user
 sudo su - backup-user
-
-# 2. Inject Secret Auth String (.pgpass format: hostname:port:database:username:password)
-cat << 'EOF' >> ~/.pgpass
-localhost:5432:*:backup_user:YOURPASSWORD
-EOF
-
-# 3. Lock Permissions from other Unix Users (Security - .pgpass MUST be 600)
-chmod 600 ~/.pgpass
 ```
+> [!TIP]
+> No `.pgpass` file is needed on the server. The password is stored centrally in the Ansible inventory (or Semaphore credentials) as `pg_password`, and passed to `pg_dump`/`psql` via the `PGPASSWORD` environment variable at execution time.
+
 > [!IMPORTANT]
-> PostgreSQL **requires** the `.pgpass` file to have `chmod 600` permissions. If the permissions are more permissive, PostgreSQL will **ignore** the file entirely and prompt for a password interactively.
+> For production environments, it is **strongly recommended** to encrypt the `pg_password` value using **Ansible Vault** or store it in the **Semaphore Keystore** to prevent plaintext password exposure in inventory files.
 
 ### 🗝️ 3. Push-Pull Authentication Gate Installation (DRC & Ansible)
 Just as on the application server, establish the ed25519 _passwordless_ barricade:
@@ -97,7 +92,7 @@ all:
           pg_host: "localhost"       # PostgreSQL host address
           pg_port: "5432"            # PostgreSQL port (default: 5432)
           pg_user: "backup_user"     # PostgreSQL user for pg_dump
-          pg_passfile: "~/.pgpass"   # Path to .pgpass file
+          pg_password: "YOURPASSWORD" # PostgreSQL password (use ansible-vault to encrypt!)
           
           # [Optional] Additional pg_dump flags
           pg_dump_extra_opts: "--no-owner --no-acl"

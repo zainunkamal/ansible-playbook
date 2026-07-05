@@ -209,7 +209,7 @@
           register: db_list
           changed_when: false
           environment:
-            PGPASSFILE: "{{ pg_passfile | default('~/.pgpass') }}"
+            PGPASSWORD: "{{ pg_password }}"
 
         - name: "2b. Filter & Sort databases (Ignore System + Custom Exclusions)"
           set_fact:
@@ -227,7 +227,7 @@
           register: dump_jobs
           ignore_errors: yes
           environment:
-            PGPASSFILE: "{{ pg_passfile | default('~/.pgpass') }}"
+            PGPASSWORD: "{{ pg_password }}"
 
         - name: "3.5. Waiting for Dump Processes (1-Min Checks)..."
           async_status:

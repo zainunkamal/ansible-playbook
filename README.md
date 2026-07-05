@@ -30,8 +30,8 @@ This documentation covers the database remote backup processing via `Backup-Mari
 
 ### 👉 [📗 Database Backup Management Guide (PostgreSQL)](README-Postgresql.md)
 This documentation covers the PostgreSQL database remote backup processing via `Backup-Postgresql.yml`. It includes:
-- Configuration of `pg_dump` with custom format and `.pgpass` passwordless authentication.
-- PostgreSQL role/privilege assignment and the `~/.pgpass` secret credential file generation.
+- Configuration of `pg_dump` with custom format and `PGPASSWORD` environment variable authentication.
+- PostgreSQL role/privilege assignment and centralized credential management via Ansible inventory.
 - The asynchronous parallel *pg_dump* and efficient SSH Rsync transfer schemes.
 
 ---
