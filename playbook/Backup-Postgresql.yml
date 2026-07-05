@@ -288,18 +288,18 @@
 
         - name: "4. Create Date Directory on Backup Server (DRC)"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
             "mkdir -p {{ backup_path }}/sql/daily/{{ date_daily }}"
 
         - name: "5. (DAILY) Rsync SQL folder to Backup Server"
           shell: >
             rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
-            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            -e "ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes"
             ~/sql-backup/{{ inventory_hostname }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/daily/{{ date_daily }}/
 
         - name: "6. (DAILY) Delete daily backup folders older than {{ daily_db_retention_days }} days"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
             "find {{ backup_path }}/sql/daily -mindepth 1 -maxdepth 1 -type d -mtime +{{ daily_db_retention_days }} -exec rm -rf {} \;"
 
         # ---------------------------------------------------------
@@ -307,20 +307,20 @@
         # ---------------------------------------------------------
         - name: "7. (MONTHLY) Create Month Directory on Backup Server"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
             "mkdir -p {{ backup_path }}/sql/monthly/{{ month_last }}"
           when: is_first_day
 
         - name: "8. (MONTHLY) Rsync SQL folder to Monthly Backup Server"
           shell: >
             rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
-            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
+            -e "ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes"
             ~/sql-backup/{{ inventory_hostname }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/monthly/{{ month_last }}/
           when: is_first_day
 
         - name: "9. (MONTHLY) Delete monthly backup folders older than {{ monthly_db_retention_days }} days"
           shell: >
-            ssh -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
+            ssh -p {{ backup_port | default('22') }} -o StrictHostKeyChecking=no -o BatchMode=yes -q {{ backup_user }}@{{ backup_ip }} 
             "find {{ backup_path }}/sql/monthly -mindepth 1 -maxdepth 1 -type d -mtime +{{ monthly_db_retention_days }} -exec rm -rf {} \;"
           when: is_first_day
 
