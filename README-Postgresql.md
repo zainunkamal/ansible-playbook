@@ -90,6 +90,7 @@ all:
           pg_port: "5432"            # PostgreSQL port (default: 5432)
           pg_user: "backup_user"     # PostgreSQL user untuk pg_dump
           pg_password: "YOURPASSWORD" # PostgreSQL password (sangat disarankan di-encrypt pakai ansible-vault!)
+          # pg_default_db: "postgres"  # (Opsional) Database default untuk query list DB. Default: postgres
           
           # [Optional] Additional pg_dump flags
           pg_dump_extra_opts: "--no-owner --no-acl"

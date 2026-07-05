@@ -209,7 +209,7 @@
         - name: "2a. Fetch list of all databases (PostgreSQL)"
           shell: >
             psql -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
-            -U {{ pg_user | default('backup_user') }}
+            -U {{ pg_user | default('backup_user') }} -d {{ pg_default_db | default('postgres') }}
             -t -A -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
           register: db_list
           changed_when: false
