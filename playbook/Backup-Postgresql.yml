@@ -95,8 +95,7 @@
   vars:
     daily_db_retention_days: "30"
     monthly_db_retention_days: "365"
-    pg_connection: "local"  # Set to "ssh" to execute pg_dump locally on the database server
-    pg_connect_host: "{{ pg_host | default('localhost') if (pg_connection == 'ssh') else (pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname) }}"
+    pg_connect_host: "{{ pg_host | default('localhost') if ((pg_connection | default('local')) == 'ssh') else (pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname) }}"
 
   tasks:
     # =========================================================
