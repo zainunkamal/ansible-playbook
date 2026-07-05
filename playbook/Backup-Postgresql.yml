@@ -191,7 +191,15 @@
       when: check_conn.failed is not defined or not check_conn.failed
       set_fact:
         date_daily: "{{ ansible_date_time.date }}"
-        month_last: "{{ lookup('pipe', 'date -d \"-1 month\" +%B-%Y') }}"
+        month_last: >-
+          {%- set months = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] -%}
+          {%- set current_month = ansible_date_time.month | int -%}
+          {%- set current_year = ansible_date_time.year | int -%}
+          {%- if current_month == 1 -%}
+            {{ months[12] }}-{{ current_year - 1 }}
+          {%- else -%}
+            {{ months[current_month - 1] }}-{{ current_year }}
+          {%- endif -%}
         is_first_day: "{{ ansible_date_time.day == '01' }}"
 
     # =========================================================
