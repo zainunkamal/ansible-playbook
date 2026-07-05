@@ -222,10 +222,13 @@
 
         - name: "3. Dump & Compress each database to a local file (.gz) (Async Parallel)"
           shell: >
+            set -o pipefail;
             pg_dump -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
             -U {{ pg_user | default('backup_user') }}
             -Fc {{ pg_dump_extra_opts | default('') }}
             {{ item }} | gzip -9 > ~/sql-backup/{{ inventory_hostname }}/{{ item }}.dump.gz
+          args:
+            executable: /bin/bash
           loop: "{{ target_dbs }}"
           async: 10800
           poll: 0
