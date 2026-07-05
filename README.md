@@ -28,6 +28,12 @@ This documentation covers the database remote backup processing via `Backup-Mari
 - Database account access assignment and the `~/.conf/config.cnf` secret credential file generation.
 - The asynchronous multi-threading *SQL dump* and efficient SSH transfer schemes.
 
+### 👉 [📗 Database Backup Management Guide (PostgreSQL)](README-Postgresql.md)
+This documentation covers the PostgreSQL database remote backup processing via `Backup-Postgresql.yml`. It includes:
+- Configuration of `pg_dump` with custom format and `.pgpass` passwordless authentication.
+- PostgreSQL role/privilege assignment and the `~/.pgpass` secret credential file generation.
+- The asynchronous parallel *pg_dump* and efficient SSH Rsync transfer schemes.
+
 ---
 
 ## 🔔 Multi-channel Notification Integration (Alerting)
