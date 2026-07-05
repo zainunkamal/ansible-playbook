@@ -90,11 +90,13 @@
 - name: PostgreSQL Backup Automation (pg_dump & Rsync)
   hosts: pg_servers
   gather_facts: no
-  connection: local
+  connection: "{{ pg_connection | default('local') }}"
 
   vars:
     daily_db_retention_days: "30"
     monthly_db_retention_days: "365"
+    pg_connection: "local"  # Set to "ssh" to execute pg_dump locally on the database server
+    pg_connect_host: "{{ pg_host | default('localhost') if (pg_connection == 'ssh') else (pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname) }}"
 
   tasks:
     # =========================================================
@@ -102,7 +104,7 @@
     # =========================================================
     - name: Check Connection to PostgreSQL Port
       wait_for:
-        host: "{{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }}"
+        host: "{{ pg_connect_host }}"
         port: "{{ pg_port | default('5432') }}"
         state: started
         timeout: 10
@@ -223,7 +225,7 @@
 
         - name: "2a. Fetch list of all databases (PostgreSQL)"
           shell: >
-            psql -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
+            psql -h {{ pg_connect_host }} -p {{ pg_port | default('5432') }}
             -U {{ pg_user | default('backup_user') }} -d {{ pg_default_db | default('postgres') }}
             -t -A -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
           register: db_list
@@ -238,7 +240,7 @@
         - name: "3. Dump & Compress each database to a local file (.gz) (Async Parallel)"
           shell: >
             set -o pipefail;
-            pg_dump -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
+            pg_dump -h {{ pg_connect_host }} -p {{ pg_port | default('5432') }}
             -U {{ pg_user | default('backup_user') }}
             -Fc {{ pg_dump_extra_opts | default('') }}
             {{ item }} | gzip -9 > ~/sql-backup/{{ inventory_hostname }}/{{ item }}.dump.gz

@@ -86,6 +86,7 @@ all:
           backup_path: "/data/backup" # Root DRC Target Directory
           
           # [PostgreSQL Connection Settings]
+          # pg_connection: "local"     # (Opsional) "local" (default) = run pg_dump di Ansible server; "ssh" = run pg_dump di database server
           # pg_host: "localhost"       # (Opsional) Gunakan jika database dipanggil melalui VIP/lainnya. Default: IP host (<IP_ADDRESS_PG>)
           pg_port: "5432"            # PostgreSQL port (default: 5432)
           pg_user: "backup_user"     # PostgreSQL user untuk pg_dump
