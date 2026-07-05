@@ -13,16 +13,32 @@ In its new schema, the playbook operates using a high-iteration intelligence sys
 
 ---
 
-## ⚙️ Ansible Server / Semaphore Server
+## ⚙️ Ansible Server / Semaphore Server Preparation
 
-In the ansible/semaphore server, we will need ssh-key to access the PostgreSQL server. The private key will be stored in the ansible/semaphore server and the public key will be stored in the PostgreSQL server.
+Karena playbook ini dijalankan secara **lokal** pada Ansible Server (`connection: local`), pastikan Ansible/Semaphore Server Anda telah terpasang utility klien PostgreSQL agar perintah `pg_dump` dan `psql` dapat dieksekusi secara remote:
 
-## ⚙️ Base Server Preparation (PostgreSQL Server)
+```bash
+# Ubuntu / Debian
+sudo apt-get install -y postgresql-client
 
-If your PostgreSQL server is not within the same OS environment scope as the *App Server*, perform additional OS environment configuration as in the following example:
+# CentOS / RHEL / Rocky Linux
+sudo dnf install -y postgresql
+```
+
+> [!NOTE]
+> Pastikan versi `pg_dump` di Ansible Server setara atau lebih tinggi dibandingkan versi PostgreSQL Server target agar proses restore dump berjalan tanpa masalah kompatibilitas.
+
+### 🗝️ SSH Access to DRC Server
+Ansible Server juga harus memiliki akses SSH *passwordless* (menggunakan private key) ke target **DRC Server** agar perintah `rsync` dan `ssh` pembersihan file lama dapat berjalan otomatis.
+
+---
+
+## ⚙️ Base Server Preparation (PostgreSQL / Patroni Server Target)
+
+Keuntungan utama dari arsitektur terpusat ini adalah **tidak perlu melakukan instalasi SSH keys atau konfigurasi Unix user baru di server database target**. Anda cukup memberikan izin akses PostgreSQL secara remote:
 
 ### 🗄️ 1. PostgreSQL Access Profile Authorization
-Enter the PostgreSQL console on the server (e.g., `sudo -u postgres psql`) and grant execution mandates so it can perform _Dumps_:
+Masuk ke konsol PostgreSQL di salah satu server database (atau cluster VIP) untuk membuat user backup:
 ```sql
 -- Create a dedicated backup user with minimal required privileges
 CREATE ROLE backup_user WITH LOGIN PASSWORD 'YOURPASSWORD';
@@ -36,45 +52,26 @@ GRANT USAGE ON SCHEMA public TO backup_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO backup_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO backup_user;
 ```
-> [!NOTE]
-> For the backup user to be able to dump **all** databases, you need to run the `GRANT` commands inside **each** database you want to back up. Alternatively, you can grant the `pg_read_all_data` role (PostgreSQL 14+):
+> [!TIP]
+> Agar user backup dapat men-dump **seluruh** database secara otomatis tanpa memberikan hak akses satu per satu, Anda bisa memberikan role `pg_read_all_data` (tersedia mulai dari PostgreSQL 14+):
 > ```sql
 > GRANT pg_read_all_data TO backup_user;
 > ```
 
-### 🛡️ 2. Client Credential & System Setup (`PGPASSWORD`)
-The playbook authenticates `pg_dump` and `psql` commands using the `PGPASSWORD` environment variable, which is injected automatically at runtime from the Ansible inventory variable `pg_password`. This eliminates the need to manually create and maintain `.pgpass` files on every server node — especially beneficial for **Patroni/HA clusters** where multiple nodes exist.
-```bash
-# 1. Create Unix User (for Ansible SSH access)
-sudo useradd --system --create-home --user-group --shell /bin/bash backup-user
-sudo su - backup-user
+### 🌐 2. PostgreSQL Remote Network Access (pg_hba.conf)
+Pastikan PostgreSQL Server target mengizinkan koneksi dari IP **Ansible Server**. Tambahkan baris berikut di file `pg_hba.conf` server PostgreSQL target Anda:
+
+```text
+# Mengizinkan koneksi dari IP Ansible Server
+host    all             backup_user     <IP_ANSIBLE_SERVER>/32   md5
 ```
-> [!TIP]
-> No `.pgpass` file is needed on the server. The password is stored centrally in the Ansible inventory (or Semaphore credentials) as `pg_password`, and passed to `pg_dump`/`psql` via the `PGPASSWORD` environment variable at execution time.
+Jangan lupa untuk me-reload servis PostgreSQL / Patroni setelah mengubah konfigurasi network.
 
-> [!IMPORTANT]
-> For production environments, it is **strongly recommended** to encrypt the `pg_password` value using **Ansible Vault** or store it in the **Semaphore Keystore** to prevent plaintext password exposure in inventory files.
-
-### 🗝️ 3. Push-Pull Authentication Gate Installation (DRC & Ansible)
-Just as on the application server, establish the ed25519 _passwordless_ barricade:
-```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-# Send the public key to DRC (Make sure SSH port is adjusted)
-ssh-copy-id -i ~/.ssh/id_ed25519.pub <USER_DRC>@<IP_TARGET_DRC> -p <PORT_SSH>
-
-# Unlock this server so Semaphore can navigate the Linux system and piggyback its commands going forward
-cat << 'EOF' >> ~/.ssh/authorized_keys
-# Place Ansible Semaphore Pubkey here:
-ssh-rsa AAAAB3NzaC1yc...
-EOF
-
-# Set secure SSH permissions
-chmod 600 ~/.ssh/authorized_keys
-```
+---
 
 ## ⚙️ Inventory and Variable Preparation (Ansible)
 ### Inventory
-To execute this playbook efficiently, construct your PostgreSQL Ansible Inventory (e.g., `Inventory-pg.yml`) using the following mapping structure:
+Buat PostgreSQL Ansible Inventory (contoh: `Inventory-pg.yml`) seperti berikut:
 ```yaml
 all:
   children:
@@ -89,17 +86,18 @@ all:
           backup_path: "/data/backup" # Root DRC Target Directory
           
           # [PostgreSQL Connection Settings]
-          pg_host: "localhost"       # PostgreSQL host address
+          # pg_host: "localhost"       # (Opsional) Gunakan jika database dipanggil melalui VIP/lainnya. Default: IP host (<IP_ADDRESS_PG>)
           pg_port: "5432"            # PostgreSQL port (default: 5432)
-          pg_user: "backup_user"     # PostgreSQL user for pg_dump
-          pg_password: "YOURPASSWORD" # PostgreSQL password (use ansible-vault to encrypt!)
+          pg_user: "backup_user"     # PostgreSQL user untuk pg_dump
+          pg_password: "YOURPASSWORD" # PostgreSQL password (sangat disarankan di-encrypt pakai ansible-vault!)
           
           # [Optional] Additional pg_dump flags
           pg_dump_extra_opts: "--no-owner --no-acl"
 
-          # [Exclusions] Databases to skip explicitly
+          # [Exclusions] Database yang ingin di-skip dari backup
           exclude_dbs: 
             - "postgres"
+```
 ```
 ### Variable
 Variable for notification postgresql

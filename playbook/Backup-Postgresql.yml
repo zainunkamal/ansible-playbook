@@ -88,6 +88,7 @@
 - name: PostgreSQL Backup Automation (pg_dump & Rsync)
   hosts: pg_servers
   gather_facts: no
+  connection: local
 
   vars:
     daily_db_retention_days: "30"
@@ -97,9 +98,13 @@
     # =========================================================
     # CHECK CONNECTION & GATHER FACTS SAFELY
     # =========================================================
-    - name: Check Connection to PostgreSQL Server
-      ping:
-      ignore_unreachable: yes
+    - name: Check Connection to PostgreSQL Port
+      wait_for:
+        host: "{{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }}"
+        port: "{{ pg_port | default('5432') }}"
+        state: started
+        timeout: 10
+      ignore_errors: yes
       register: check_conn
 
     # =========================================================
@@ -131,7 +136,7 @@
               footer:
                 text: "Automated by Ansible Semaphore"
       when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
+        - check_conn.failed is defined and check_conn.failed
         - "'discord' in (active_notifications | default(['discord']))"
 
     - name: Send Unreachable Notification to Telegram
@@ -153,7 +158,7 @@
             *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
             Ansible is unable to establish an SSH connection to the PostgreSQL server. The backup process is aborted.
       when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
+        - check_conn.failed is defined and check_conn.failed
         - "'telegram' in (active_notifications | default([]))"
 
     - name: Send Unreachable Notification to WhatsApp
@@ -175,15 +180,15 @@
             *STATUS: SERVER DOWN / LOGIN FAILED!* 🚨
             Ansible is unable to establish an SSH connection to the PostgreSQL server. The backup process is aborted.
       when: 
-        - check_conn.unreachable is defined and check_conn.unreachable
+        - check_conn.failed is defined and check_conn.failed
         - "'whatsapp' in (active_notifications | default([]))"
 
     - name: Gather Facts
       setup:
-      when: check_conn.unreachable is not defined
+      when: check_conn.failed is not defined or not check_conn.failed
 
     - name: Set Dynamic Time Variables
-      when: check_conn.unreachable is not defined
+      when: check_conn.failed is not defined or not check_conn.failed
       set_fact:
         date_daily: "{{ ansible_date_time.date }}"
         month_last: "{{ lookup('pipe', 'date -d \"-1 month\" +%B-%Y') }}"
@@ -193,17 +198,17 @@
     # MAIN BLOCK: PG_DUMP, RSYNC, CLEANUP
     # =========================================================
     - name: Execute PostgreSQL Backup
-      when: check_conn.unreachable is not defined
+      when: check_conn.failed is not defined or not check_conn.failed
       block:
         - name: "1. Create temporary local staging directory"
           file:
-            path: "~/sql"
+            path: "~/sql-backup/{{ inventory_hostname }}"
             state: directory
             mode: '0755'
 
         - name: "2a. Fetch list of all databases (PostgreSQL)"
           shell: >
-            psql -h {{ pg_host | default('localhost') }} -p {{ pg_port | default('5432') }}
+            psql -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
             -U {{ pg_user | default('backup_user') }}
             -t -A -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
           register: db_list
@@ -217,10 +222,10 @@
 
         - name: "3. Dump & Compress each database to a local file (.gz) (Async Parallel)"
           shell: >
-            pg_dump -h {{ pg_host | default('localhost') }} -p {{ pg_port | default('5432') }}
+            pg_dump -h {{ pg_host if (pg_host is defined and pg_host != 'localhost') else inventory_hostname }} -p {{ pg_port | default('5432') }}
             -U {{ pg_user | default('backup_user') }}
             -Fc {{ pg_dump_extra_opts | default('') }}
-            {{ item }} | gzip -9 > ~/sql/{{ item }}.dump.gz
+            {{ item }} | gzip -9 > ~/sql-backup/{{ inventory_hostname }}/{{ item }}.dump.gz
           loop: "{{ target_dbs }}"
           async: 10800
           poll: 0
@@ -241,7 +246,7 @@
           ignore_errors: yes
 
         - name: "3.6. Check Local File Dump Sizes"
-          shell: "du -sb ~/sql/{{ item }}.dump.gz | cut -f1"
+          shell: "du -sb ~/sql-backup/{{ inventory_hostname }}/{{ item }}.dump.gz | cut -f1"
           loop: "{{ target_dbs }}"
           register: size_after_res
           ignore_errors: yes
@@ -270,7 +275,7 @@
           shell: >
             rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
             -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
-            ~/sql/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/daily/{{ date_daily }}/
+            ~/sql-backup/{{ inventory_hostname }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/daily/{{ date_daily }}/
 
         - name: "6. (DAILY) Delete daily backup folders older than {{ daily_db_retention_days }} days"
           shell: >
@@ -290,7 +295,7 @@
           shell: >
             rsync -avzp --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r --delete 
             -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes"
-            ~/sql/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/monthly/{{ month_last }}/
+            ~/sql-backup/{{ inventory_hostname }}/ {{ backup_user }}@{{ backup_ip }}:{{ backup_path }}/sql/monthly/{{ month_last }}/
           when: is_first_day
 
         - name: "9. (MONTHLY) Delete monthly backup folders older than {{ monthly_db_retention_days }} days"
@@ -304,7 +309,7 @@
         # ---------------------------------------------------------
         - name: "10. Delete temporary SQL dump files on the local server"
           file:
-            path: "~/sql"
+            path: "~/sql-backup/{{ inventory_hostname }}"
             state: absent
 
         - name: 11a. Send RECAP Notification to Discord
