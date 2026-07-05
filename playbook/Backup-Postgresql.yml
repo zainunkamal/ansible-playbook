@@ -8,7 +8,7 @@
   tasks:
     - name: Send Inventory Error Notification to Discord
       uri:
-        url: "{{ discord_webhook_url }}"
+        url: "{{ discord_webhook_url | default('') }}"
         method: POST
         headers:
           Content-Type: "application/json"
@@ -30,19 +30,19 @@
                 text: "Automated by Ansible Semaphore"
       when: 
         - "(groups['pg_servers'] is not defined) or (groups['pg_servers'] | length == 0)"
-        - "discord_webhook_url is defined"
+        - "discord_webhook_url is defined and discord_webhook_url | length > 0"
         - "'discord' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
       ignore_errors: yes
 
     - name: Send Inventory Error Notification to Telegram
       uri:
-        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        url: "https://api.telegram.org/bot{{ telegram_bot_token | default('') }}/sendMessage"
         method: POST
         headers:
           Content-Type: "application/json"
         body_format: json
         body:
-          chat_id: "{{ telegram_chat_id }}"
+          chat_id: "{{ telegram_chat_id | default('') }}"
           parse_mode: "Markdown"
           text: |
             🚨 *[FATAL] Failed to Parse Inventory!*
@@ -53,20 +53,21 @@
             Please fix the YAML inventory format! (Recheck indentation spacing).
       when: 
         - "(groups['pg_servers'] is not defined) or (groups['pg_servers'] | length == 0)"
-        - "telegram_bot_token is defined"
+        - "telegram_bot_token is defined and telegram_bot_token | length > 0"
+        - "telegram_chat_id is defined and telegram_chat_id | length > 0"
         - "'telegram' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
       ignore_errors: yes
 
     - name: Send Inventory Error Notification to WhatsApp
       uri:
-        url: "{{ whatsapp_api_url }}"
+        url: "{{ whatsapp_api_url | default('') }}"
         method: POST
         headers:
           Authorization: "{{ whatsapp_api_key | default('') }}"
           Content-Type: "application/json"
         body_format: json
         body:
-          target: "{{ whatsapp_target_number }}"
+          target: "{{ whatsapp_target_number | default('') }}"
           message: |
             🚨 *[FATAL] Failed to Parse Inventory!*
 
@@ -76,7 +77,8 @@
             Please fix the YAML Inventory formatting/spacing!
       when: 
         - "(groups['pg_servers'] is not defined) or (groups['pg_servers'] | length == 0)"
-        - "whatsapp_api_url is defined and whatsapp_target_number is defined"
+        - "whatsapp_api_url is defined and whatsapp_api_url | length > 0"
+        - "whatsapp_target_number is defined and whatsapp_target_number | length > 0"
         - "'whatsapp' in (active_notifications | default(['discord', 'telegram', 'whatsapp']))"
       ignore_errors: yes
 
@@ -113,7 +115,7 @@
     - name: Send Unreachable Notification to Discord
       delegate_to: localhost
       uri:
-        url: "{{ discord_webhook_url }}"
+        url: "{{ discord_webhook_url | default('') }}"
         method: POST
         headers:
           Content-Type: "application/json"
@@ -138,17 +140,18 @@
       when: 
         - check_conn.failed is defined and check_conn.failed
         - "'discord' in (active_notifications | default(['discord']))"
+        - discord_webhook_url is defined and discord_webhook_url | length > 0
 
     - name: Send Unreachable Notification to Telegram
       delegate_to: localhost
       uri:
-        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        url: "https://api.telegram.org/bot{{ telegram_bot_token | default('') }}/sendMessage"
         method: POST
         headers:
           Content-Type: "application/json"
         body_format: json
         body:
-          chat_id: "{{ telegram_chat_id }}"
+          chat_id: "{{ telegram_chat_id | default('') }}"
           parse_mode: "Markdown"
           text: |
             🚨 *[CRITICAL] Server Unreachable!*
@@ -160,18 +163,20 @@
       when: 
         - check_conn.failed is defined and check_conn.failed
         - "'telegram' in (active_notifications | default([]))"
+        - telegram_bot_token is defined and telegram_bot_token | length > 0
+        - telegram_chat_id is defined and telegram_chat_id | length > 0
 
     - name: Send Unreachable Notification to WhatsApp
       delegate_to: localhost
       uri:
-        url: "{{ whatsapp_api_url }}"
+        url: "{{ whatsapp_api_url | default('') }}"
         method: POST
         headers:
           Authorization: "{{ whatsapp_api_key | default('') }}"
           Content-Type: "application/json"
         body_format: json
         body:
-          target: "{{ whatsapp_target_number }}"
+          target: "{{ whatsapp_target_number | default('') }}"
           message: |
             🚨 *[CRITICAL] Server Unreachable!*
             *Alias:* {{ server_alias | default('PostgreSQL Server') }}
@@ -182,6 +187,8 @@
       when: 
         - check_conn.failed is defined and check_conn.failed
         - "'whatsapp' in (active_notifications | default([]))"
+        - whatsapp_api_url is defined and whatsapp_api_url | length > 0
+        - whatsapp_target_number is defined and whatsapp_target_number | length > 0
 
     - name: Gather Facts
       setup:
@@ -326,7 +333,7 @@
         - name: 11a. Send RECAP Notification to Discord
           delegate_to: localhost 
           uri:
-            url: "{{ discord_webhook_url }}"
+            url: "{{ discord_webhook_url | default('') }}"
             method: POST
             headers:
               Content-Type: "application/json"
@@ -378,18 +385,20 @@
                     **Completion Time:** `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
                   footer:
                     text: "Automated by Ansible Semaphore"
-          when: "'discord' in (active_notifications | default(['discord']))"
+          when: 
+            - "'discord' in (active_notifications | default(['discord']))"
+            - discord_webhook_url is defined and discord_webhook_url | length > 0
 
         - name: 11b. Send RECAP Notification to Telegram
           delegate_to: localhost
           uri:
-            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            url: "https://api.telegram.org/bot{{ telegram_bot_token | default('') }}/sendMessage"
             method: POST
             headers:
               Content-Type: "application/json"
             body_format: json
             body:
-              chat_id: "{{ telegram_chat_id }}"
+              chat_id: "{{ telegram_chat_id | default('') }}"
               parse_mode: "Markdown"
               text: |
                 📋 *[REPORT] Database Backup Details (POSTGRESQL)*
@@ -428,19 +437,22 @@
                 {% endif %}
                 
                 *Completion Time:* `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
-          when: "'telegram' in (active_notifications | default([]))"
+          when: 
+            - "'telegram' in (active_notifications | default([]))"
+            - telegram_bot_token is defined and telegram_bot_token | length > 0
+            - telegram_chat_id is defined and telegram_chat_id | length > 0
 
         - name: 11c. Send RECAP Notification to WhatsApp
           delegate_to: localhost
           uri:
-            url: "{{ whatsapp_api_url }}"
+            url: "{{ whatsapp_api_url | default('') }}"
             method: POST
             headers:
               Authorization: "{{ whatsapp_api_key | default('') }}"
               Content-Type: "application/json"
             body_format: json
             body:
-              target: "{{ whatsapp_target_number }}"
+              target: "{{ whatsapp_target_number | default('') }}"
               message: |
                 📋 *[REPORT] Database Backup Details (POSTGRESQL)*
                 *Alias:* {{ server_alias | default('PostgreSQL Server') }}
@@ -478,7 +490,10 @@
                 {% endif %}
 
                 *Completion Time:* {{ ansible_date_time.date }} {{ ansible_date_time.time }}
-          when: "'whatsapp' in (active_notifications | default([]))"
+          when: 
+            - "'whatsapp' in (active_notifications | default([]))"
+            - whatsapp_api_url is defined and whatsapp_api_url | length > 0
+            - whatsapp_target_number is defined and whatsapp_target_number | length > 0
 
       # =========================================================
       # RESCUE PHASE (IF DUMP / RSYNC FAILS)
@@ -487,7 +502,7 @@
         - name: 12a. Send FAILURE Notification to Discord
           delegate_to: localhost 
           uri:
-            url: "{{ discord_webhook_url }}"
+            url: "{{ discord_webhook_url | default('') }}"
             method: POST
             headers:
               Content-Type: "application/json"
@@ -521,19 +536,21 @@
                     *Please check execution logs in the Ansible Semaphore dashboard.*
                   footer:
                     text: "Automated by Ansible Semaphore"
-          when: "'discord' in (active_notifications | default(['discord']))"
+          when: 
+            - "'discord' in (active_notifications | default(['discord']))"
+            - discord_webhook_url is defined and discord_webhook_url | length > 0
           ignore_errors: yes
 
         - name: 12b. Send FAILURE Notification to Telegram
           delegate_to: localhost
           uri:
-            url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+            url: "https://api.telegram.org/bot{{ telegram_bot_token | default('') }}/sendMessage"
             method: POST
             headers:
               Content-Type: "application/json"
             body_format: json
             body:
-              chat_id: "{{ telegram_chat_id }}"
+              chat_id: "{{ telegram_chat_id | default('') }}"
               parse_mode: "Markdown"
               text: |
                 ❌ *[FAILED] PostgreSQL Backup Warning!*
@@ -552,20 +569,23 @@
                 *(...and {{ (target_dbs | length) - 50 }} more databases)*
                 {% endif %}
                 {% endif %}
-          when: "'telegram' in (active_notifications | default([]))"
+          when: 
+            - "'telegram' in (active_notifications | default([]))"
+            - telegram_bot_token is defined and telegram_bot_token | length > 0
+            - telegram_chat_id is defined and telegram_chat_id | length > 0
           ignore_errors: yes
 
         - name: 12c. Send FAILURE Notification to WhatsApp
           delegate_to: localhost
           uri:
-            url: "{{ whatsapp_api_url }}"
+            url: "{{ whatsapp_api_url | default('') }}"
             method: POST
             headers:
               Authorization: "{{ whatsapp_api_key | default('') }}"
               Content-Type: "application/json"
             body_format: json
             body:
-              target: "{{ whatsapp_target_number }}"
+              target: "{{ whatsapp_target_number | default('') }}"
               message: |
                 ❌ *[FAILED] PostgreSQL Backup Warning!*
                 *Alias:* {{ server_alias | default('PostgreSQL Server') }}
@@ -583,5 +603,8 @@
                 *(...and {{ (target_dbs | length) - 50 }} more databases)*
                 {% endif %}
                 {% endif %}
-          when: "'whatsapp' in (active_notifications | default([]))"
+          when: 
+            - "'whatsapp' in (active_notifications | default([]))"
+            - whatsapp_api_url is defined and whatsapp_api_url | length > 0
+            - whatsapp_target_number is defined and whatsapp_target_number | length > 0
           ignore_errors: yes
