@@ -353,34 +353,19 @@
                     **Server IP:** `{{ inventory_hostname }}`
                     **DRC Target:** `{{ backup_ip | default('Unknown IP') }}`
                     
-                    **Overall Summary:**
+                    {% set success_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Success') | list %}
                     {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                    {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                    {% if failed_dbs | length == 0 %}
-                    🎉 **ALL SUCCESS!** All {{ db_backup_results | length }} databases were securely backed up.
-                    {% else %}
-                    ⚠️ **ATTENTION!** {{ failed_dbs | length }} database(s) **FAILED** to backup:
+                    **Ringkasan Backup:**
+                    - ✅ **Jumlah Sukses:** {{ success_dbs | length }} / {{ db_backup_results | default([]) | length }} DB
+                    {% if failed_dbs | length > 0 %}
+                    - ❌ **Jumlah Gagal:** {{ failed_dbs | length }} DB
+
+                    **Database Gagal:**
                     {% for fdb in failed_dbs %}
                     - ❌ `{{ fdb.name }}`
                     {% endfor %}
-                    {% endif %}
-                    {% endif %}
-
-                    **Status & Storage Size:**
-                    {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                    {% for db in db_backup_results[:50] %}
-                    {% if db.status == 'Success' %}
-                    - ✅ **{{ db.name }}**: Success (📦 {{ db.total_size | default('N/A') }})
                     {% else %}
-                    - ❌ **{{ db.name }}**: Failed (Dump Error)
-                    {% endif %}
-                    {% endfor %}
-                    {% if db_backup_results | length > 50 %}
-                    
-                    *(...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)*
-                    {% endif %}
-                    {% else %}
-                    *(No databases were processed)*
+                    - ❌ **Jumlah Gagal:** 0 DB
                     {% endif %}
 
                     **Completion Time:** `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
@@ -407,34 +392,19 @@
                 *Server IP:* `{{ inventory_hostname }}`
                 *DRC Target:* `{{ backup_ip | default('Unknown IP') }}`
 
-                *Overall Summary:*
+                {% set success_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Success') | list %}
                 {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                {% if failed_dbs | length == 0 %}
-                🎉 *ALL SUCCESS!* All {{ db_backup_results | length }} databases were securely backed up.
-                {% else %}
-                ⚠️ *ATTENTION!* {{ failed_dbs | length }} database(s) *FAILED* to backup:
+                *Ringkasan Backup:*
+                - ✅ *Jumlah Sukses:* {{ success_dbs | length }} / {{ db_backup_results | default([]) | length }} DB
+                {% if failed_dbs | length > 0 %}
+                - ❌ *Jumlah Gagal:* {{ failed_dbs | length }} DB
+
+                *Database Gagal:*
                 {% for fdb in failed_dbs %}
                 - ❌ `{{ fdb.name }}`
                 {% endfor %}
-                {% endif %}
-                {% endif %}
-
-                *Status & Storage Size:*
-                {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                {% for db in db_backup_results[:50] %}
-                {% if db.status == 'Success' %}
-                - ✅ *{{ db.name }}*: Success (📦 {{ db.total_size | default('N/A') }})
                 {% else %}
-                - ❌ *{{ db.name }}*: Failed
-                {% endif %}
-                {% endfor %}
-                {% if db_backup_results | length > 50 %}
-                
-                *(...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)*
-                {% endif %}
-                {% else %}
-                *(No databases were processed)*
+                - ❌ *Jumlah Gagal:* 0 DB
                 {% endif %}
                 
                 *Completion Time:* `{{ ansible_date_time.date }} {{ ansible_date_time.time }}`
@@ -460,34 +430,19 @@
                 *Server IP:* {{ inventory_hostname }}
                 *DRC Target:* {{ backup_ip | default('Unknown IP') }}
 
-                *Overall Summary:*
+                {% set success_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Success') | list %}
                 {% set failed_dbs = db_backup_results | default([]) | selectattr('status', 'equalto', 'Failed') | list %}
-                {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                {% if failed_dbs | length == 0 %}
-                🎉 ALL SUCCESS! All {{ db_backup_results | length }} databases were securely backed up.
-                {% else %}
-                ⚠️ ATTENTION! {{ failed_dbs | length }} database(s) FAILED to backup:
+                *Ringkasan Backup:*
+                - ✅ *Jumlah Sukses:* {{ success_dbs | length }} / {{ db_backup_results | default([]) | length }} DB
+                {% if failed_dbs | length > 0 %}
+                - ❌ *Jumlah Gagal:* {{ failed_dbs | length }} DB
+
+                *Database Gagal:*
                 {% for fdb in failed_dbs %}
                 - ❌ {{ fdb.name }}
                 {% endfor %}
-                {% endif %}
-                {% endif %}
-
-                *Status & Storage Size:*
-                {% if db_backup_results is defined and db_backup_results | length > 0 %}
-                {% for db in db_backup_results[:50] %}
-                {% if db.status == 'Success' %}
-                - ✅ {{ db.name }}: Success (📦 {{ db.total_size | default('N/A') }})
                 {% else %}
-                - ❌ {{ db.name }}: Failed
-                {% endif %}
-                {% endfor %}
-                {% if db_backup_results | length > 50 %}
-                
-                (...and {{ (db_backup_results | length) - 50 }} more databases. Please check Ansible logs for full details.)
-                {% endif %}
-                {% else %}
-                *(No databases were processed)*
+                - ❌ *Jumlah Gagal:* 0 DB
                 {% endif %}
 
                 *Completion Time:* {{ ansible_date_time.date }} {{ ansible_date_time.time }}
